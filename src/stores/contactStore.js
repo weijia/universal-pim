@@ -7,6 +7,7 @@ export const useContactStore = defineStore('contacts', () => {
   const loading = ref(false)
   const searchQuery = ref('')
   const showArchived = ref(false)
+  const compactMode = ref(false)
 
   // 计算属性：活跃联系人
   const activeContacts = computed(() => 
@@ -50,11 +51,20 @@ export const useContactStore = defineStore('contacts', () => {
     try {
       await db.init()
       contacts.value = await db.getAllContacts()
+      // 从设置中读取紧凑模式偏好
+      const savedCompactMode = await db.getSetting('compactMode', false)
+      compactMode.value = savedCompactMode
     } catch (error) {
       console.error('Failed to load contacts:', error)
     } finally {
       loading.value = false
     }
+  }
+
+  // 切换紧凑模式
+  async function toggleCompactMode() {
+    compactMode.value = !compactMode.value
+    await db.setSetting('compactMode', compactMode.value)
   }
 
   // 添加联系人
@@ -124,11 +134,13 @@ export const useContactStore = defineStore('contacts', () => {
     loading,
     searchQuery,
     showArchived,
+    compactMode,
     activeContacts,
     archivedContacts,
     sortedActiveContacts,
     searchResults,
     init,
+    toggleCompactMode,
     addContact,
     updateContact,
     deleteContact,

@@ -35,6 +35,13 @@
     </div>
 
     <div class="header-actions">
+      <button 
+        class="btn btn-secondary" 
+        @click="contactStore.toggleCompactMode()"
+        :title="contactStore.compactMode ? '切换为标准模式' : '切换为紧凑模式'"
+      >
+        {{ contactStore.compactMode ? '⊞ 标准' : '⊟ 紧凑' }}
+      </button>
       <button class="btn btn-primary" @click="showAddModal = true">+ 新建联系人</button>
     </div>
 
@@ -50,12 +57,12 @@
       </button>
     </div>
 
-    <div v-else class="contact-list">
+    <div v-else class="contact-list" :class="{ compact: contactStore.compactMode }">
       <div 
         v-for="contact in contactStore.searchResults" 
         :key="contact._id"
         class="contact-card"
-        :class="{ archived: contact.archived }"
+        :class="{ archived: contact.archived, compact: contactStore.compactMode }"
         @click="goToContact(contact._id)"
       >
         <div class="contact-header">
@@ -65,14 +72,18 @@
             <span v-if="contact.archived" class="badge badge-archived">已归档</span>
           </span>
         </div>
-        <div class="contact-info">
+        <div v-if="!contactStore.compactMode" class="contact-info">
           {{ contact.phone || contact.email || '无联系方式' }}
           <span v-if="contact.lastContacted">
             • 最近联系: {{ formatRelativeTime(contact.lastContacted) }}
           </span>
         </div>
-        <div v-if="contact.tags && contact.tags.length" class="contact-tags">
+        <div v-if="!contactStore.compactMode && contact.tags && contact.tags.length" class="contact-tags">
           <span v-for="tag in contact.tags" :key="tag" class="tag">{{ tag }}</span>
+        </div>
+        <!-- 紧凑模式下显示简化信息 -->
+        <div v-if="contactStore.compactMode" class="contact-info-compact">
+          {{ contact.phone || contact.email || '无联系方式' }}
         </div>
       </div>
     </div>
@@ -215,5 +226,48 @@ defineExpose({
 .nav-link.router-link-active {
   background: var(--border);
   color: var(--text);
+}
+
+/* 紧凑模式样式 */
+.contact-list.compact {
+  gap: 4px;
+}
+
+.contact-card.compact {
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.contact-card.compact .contact-header {
+  margin-bottom: 0;
+  flex: 1;
+}
+
+.contact-card.compact .contact-name {
+  font-size: 15px;
+}
+
+.contact-info-compact {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
+@media (max-width: 480px) {
+  .contact-card.compact {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  
+  .contact-info-compact {
+    max-width: 100%;
+  }
 }
 </style>
