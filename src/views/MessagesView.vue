@@ -40,9 +40,9 @@
         {{ contactStore.compactMode ? '⊞ 标准' : '⊟ 紧凑' }}
       </button>
 
-      <label class="btn btn-secondary import-btn" title="导入短信备份 JSON">
+      <label class="btn btn-secondary import-btn" title="导入短信备份 JSON/NDJSON 格式">
         📥 导入短信
-        <input type="file" accept=".json" @change="importSmsBackup" style="display: none;" />
+        <input type="file" accept=".json,.ndjson,.txt" @change="importSmsBackup" style="display: none;" />
       </label>
 
       <button 
@@ -210,18 +210,67 @@ async function importSmsBackup(event) {
   
   try {
     const text = await file.text()
-    let data = JSON.parse(text)
+    let data = []
     
-    // 支持数组或包裹在对象中的数组
-    if (!Array.isArray(data)) {
-      if (data.messages && Array.isArray(data.messages)) {
-        data = data.messages
-      } else if (data.sms && Array.isArray(data.sms)) {
-        data = data.sms
-      } else {
+    // 尝试解析为 JSON
+    // 先检查是否是 NDJSON 格式（每行一个 JSON 对象）
+    const trimmedText = text.trim()
+    
+    if (trimmedText.includes('\n') || trimmedText.includes('\r')) {
+      // 可能是 NDJSON 格式 - 尝试按行解析
+      const lines = trimmedText.split(/\r?\n/).filter(line => line.trim())
+      const parsedLines = []
+      let isNdjson = true
+      
+      for (const line of lines) {
+        try {
+          parsedLines.push(JSON.parse(line))
+        } catch (e) {
+          isNdjson = false
+          break
+        }
+      }
+      
+      if (isNdjson && parsedLines.length > 0) {
+        data = parsedLines
+      }
+    }
+    
+    // 如果不是 NDJSON，尝试标准 JSON
+    if (data.length === 0) {
+      try {
+        const parsed = JSON.parse(text)
+        
+        if (Array.isArray(parsed)) {
+          data = parsed
+        } else if (parsed && typeof parsed === 'object') {
+          // 支持包裹在对象中的数组
+          if (parsed.messages && Array.isArray(parsed.messages)) {
+            data = parsed.messages
+          } else if (parsed.sms && Array.isArray(parsed.sms)) {
+            data = parsed.sms
+          } else {
+            importResult.value = {
+              type: 'error',
+              message: 'JSON 格式不正确：需要数组，或包含 "messages"/"sms" 数组的对象',
+              skipped: []
+            }
+            event.target.value = ''
+            return
+          }
+        } else {
+          importResult.value = {
+            type: 'error',
+            message: 'JSON 格式不正确：需要数组或 NDJSON 格式',
+            skipped: []
+          }
+          event.target.value = ''
+          return
+        }
+      } catch (e) {
         importResult.value = {
           type: 'error',
-          message: 'JSON 格式不正确：需要 JSON 数组，或包含 "messages"/"sms" 数组的对象',
+          message: `JSON/NDJSON 解析失败：${e.message}`,
           skipped: []
         }
         event.target.value = ''
@@ -232,7 +281,7 @@ async function importSmsBackup(event) {
     if (data.length === 0) {
       importResult.value = {
         type: 'error',
-        message: 'JSON 数组为空，没有可导入的消息',
+        message: '文件中没有可导入的消息记录',
         skipped: []
       }
       event.target.value = ''
@@ -307,18 +356,10 @@ async function importSmsBackup(event) {
     }
     
   } catch (error) {
-    if (error instanceof SyntaxError) {
-      importResult.value = {
-        type: 'error',
-        message: `JSON 解析失败：${error.message}`,
-        skipped: []
-      }
-    } else {
-      importResult.value = {
-        type: 'error',
-        message: `导入失败：${error.message}`,
-        skipped: []
-      }
+    importResult.value = {
+      type: 'error',
+      message: `导入失败：${error.message}`,
+      skipped: []
     }
   }
   
