@@ -40,6 +40,11 @@
         {{ contactStore.compactMode ? '⊞ 标准' : '⊟ 紧凑' }}
       </button>
 
+      <label class="btn btn-secondary import-btn" title="导入短信备份 JSON">
+        📥 导入短信
+        <input type="file" accept=".json" @change="importSmsBackup" style="display: none;" />
+      </label>
+
       <button 
         v-if="hasActiveFilters" 
         class="btn btn-secondary" 
@@ -47,6 +52,26 @@
       >
         清除过滤
       </button>
+    </div>
+
+    <!-- 导入结果提示 -->
+    <div v-if="importResult" class="import-result" :class="importResult.type">
+      <div class="import-result-header">
+        <span>{{ importResult.type === 'success' ? '✅' : '⚠️' }}</span>
+        <button class="btn-icon" @click="importResult = null" style="margin-left: auto;">&times;</button>
+      </div>
+      <p>{{ importResult.message }}</p>
+      <div v-if="importResult.skipped.length" class="skipped-details">
+        <button class="btn btn-secondary btn-sm" @click="showSkipped = !showSkipped">
+          {{ showSkipped ? '收起' : '查看' }}跳过详情 ({{ importResult.skipped.length }}条)
+        </button>
+        <div v-if="showSkipped" class="skipped-list">
+          <div v-for="(item, idx) in importResult.skipped" :key="idx" class="skipped-item">
+            <span class="skipped-id">#{{ item.index + 1 }}</span>
+            <span class="skipped-reason">{{ item.reason }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="message-list" :class="{ compact: contactStore.compactMode }">
@@ -101,7 +126,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useMessageStore } from '../stores/messageStore'
 import { useContactStore } from '../stores/contactStore'
 
@@ -110,9 +135,195 @@ const contactStore = useContactStore()
 
 const contacts = computed(() => contactStore.contacts)
 
+const importResult = ref(null)
+const showSkipped = ref(false)
+
 const hasActiveFilters = computed(() => 
   messageStore.filterContact || messageStore.filterChannel || messageStore.searchQuery
 )
+
+// 短信备份 JSON 的必需字段
+const REQUIRED_FIELDS = ['_id', 'address', 'date', 'body']
+// 允许的已知字段（必需 + 可选）
+const KNOWN_FIELDS = [
+  '_id', 'thread_id', 'address', 'date', 'date_sent', 'protocol',
+  'read', 'status', 'type', 'reply_path_present', 'body',
+  'service_center', 'locked', 'error_code', 'seen', 'timed',
+  'deleted', 'sync_state', 'marker', 'bind_id', 'mx_status',
+  'out_time', 'sim_id', 'block_type', 'advanced_seen', 'b2c_ttl',
+  'fake_cell_type', 'url_risky_type', 'favorite_date', 'sub_id'
+]
+
+// 校验单条短信记录
+function validateSmsRecord(record, index) {
+  const errors = []
+  
+  // 必须是对象
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) {
+    return { valid: false, reason: `第 ${index + 1} 条记录不是有效的 JSON 对象` }
+  }
+  
+  // 检查必需字段
+  for (const field of REQUIRED_FIELDS) {
+    if (!(field in record)) {
+      errors.push(`缺少必需字段 "${field}"`)
+    }
+  }
+  
+  if (errors.length > 0) {
+    return { valid: false, reason: `第 ${index + 1} 条: ${errors.join('; ')}` }
+  }
+  
+  // 检查未知字段
+  const recordKeys = Object.keys(record)
+  const unknownFields = recordKeys.filter(k => !KNOWN_FIELDS.includes(k))
+  if (unknownFields.length > 0) {
+    return { valid: false, reason: `第 ${index + 1} 条: 包含未知字段 "${unknownFields.join('", "')}"` }
+  }
+  
+  // 检查 body 不为空
+  if (!record.body || typeof record.body !== 'string' || record.body.trim() === '') {
+    return { valid: false, reason: `第 ${index + 1} 条: body 为空或不是字符串` }
+  }
+  
+  // 检查 date 是有效时间戳（毫秒级数字字符串）
+  const dateNum = Number(record.date)
+  if (isNaN(dateNum) || dateNum < 0) {
+    return { valid: false, reason: `第 ${index + 1} 条: date "${record.date}" 不是有效的时间戳` }
+  }
+  
+  // 检查 address 不为空
+  if (!record.address || typeof record.address !== 'string' || record.address.trim() === '') {
+    return { valid: false, reason: `第 ${index + 1} 条: address 为空或不是字符串` }
+  }
+  
+  return { valid: true }
+}
+
+// 导入短信备份
+async function importSmsBackup(event) {
+  const file = event.target.files[0]
+  if (!file) return
+  
+  importResult.value = null
+  showSkipped.value = false
+  
+  try {
+    const text = await file.text()
+    let data = JSON.parse(text)
+    
+    // 支持数组或包裹在对象中的数组
+    if (!Array.isArray(data)) {
+      if (data.messages && Array.isArray(data.messages)) {
+        data = data.messages
+      } else if (data.sms && Array.isArray(data.sms)) {
+        data = data.sms
+      } else {
+        importResult.value = {
+          type: 'error',
+          message: 'JSON 格式不正确：需要 JSON 数组，或包含 "messages"/"sms" 数组的对象',
+          skipped: []
+        }
+        event.target.value = ''
+        return
+      }
+    }
+    
+    if (data.length === 0) {
+      importResult.value = {
+        type: 'error',
+        message: 'JSON 数组为空，没有可导入的消息',
+        skipped: []
+      }
+      event.target.value = ''
+      return
+    }
+    
+    // 校验所有记录
+    const skipped = []
+    const validRecords = []
+    
+    data.forEach((record, index) => {
+      const result = validateSmsRecord(record, index)
+      if (result.valid) {
+        validRecords.push(record)
+      } else {
+        skipped.push({ index, reason: result.reason })
+      }
+    })
+    
+    if (validRecords.length === 0) {
+      importResult.value = {
+        type: 'error',
+        message: `共 ${data.length} 条记录，全部校验失败，没有可导入的消息`,
+        skipped
+      }
+      event.target.value = ''
+      return
+    }
+    
+    // 确认导入
+    const confirmMsg = skipped.length > 0
+      ? `共 ${data.length} 条记录，${validRecords.length} 条有效，${skipped.length} 条将被跳过。是否导入有效的 ${validRecords.length} 条消息？`
+      : `共 ${data.length} 条记录，全部校验通过。是否导入？`
+    
+    if (!confirm(confirmMsg)) {
+      importResult.value = null
+      event.target.value = ''
+      return
+    }
+    
+    // 导入有效记录
+    let imported = 0
+    for (const record of validRecords) {
+      // 检查是否已存在（通过 _id 前缀 sms_ 判断）
+      const existingId = `sms_${record._id}`
+      const dateNum = Number(record.date)
+      const timestamp = new Date(dateNum).toISOString()
+      
+      // 判断方向：type=1 通常是接收，type=2 通常是发送
+      const direction = record.type === '2' ? 'sent' : 'received'
+      
+      await messageStore.addMessage({
+        _id: existingId,
+        contactId: '',
+        contactName: record.address,
+        channel: '短信',
+        direction,
+        timestamp,
+        content: record.body,
+        // 保留原始数据引用
+        sourceAddress: record.address,
+        sourceType: record.type,
+        sourceRead: record.read
+      })
+      imported++
+    }
+    
+    importResult.value = {
+      type: 'success',
+      message: `成功导入 ${imported} 条短信消息` + (skipped.length > 0 ? `，跳过 ${skipped.length} 条` : ''),
+      skipped
+    }
+    
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      importResult.value = {
+        type: 'error',
+        message: `JSON 解析失败：${error.message}`,
+        skipped: []
+      }
+    } else {
+      importResult.value = {
+        type: 'error',
+        message: `导入失败：${error.message}`,
+        skipped: []
+      }
+    }
+  }
+  
+  event.target.value = ''
+}
 
 // 按日期分组
 const groupedByDate = computed(() => {
@@ -181,6 +392,10 @@ async function deleteMessage(msg) {
 .nav-link.router-link-active {
   background: var(--border);
   color: var(--text);
+}
+
+.import-btn {
+  cursor: pointer;
 }
 
 .message-date-group {
@@ -293,10 +508,16 @@ async function deleteMessage(msg) {
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 4px;
+  font-size: 16px;
 }
 
 .btn-icon:hover {
   background: var(--border);
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .stats-bar {
@@ -307,5 +528,64 @@ async function deleteMessage(msg) {
   font-size: 14px;
   color: var(--text-secondary);
   text-align: center;
+}
+
+/* 导入结果提示 */
+.import-result {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.import-result.success {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+
+.import-result.error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.import-result-header {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.skipped-details {
+  margin-top: 10px;
+}
+
+.skipped-list {
+  margin-top: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.skipped-item {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 8px;
+  background: rgba(0,0,0,0.04);
+  border-radius: 4px;
+}
+
+.skipped-id {
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.skipped-reason {
+  color: var(--text);
 }
 </style>
