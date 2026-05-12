@@ -211,28 +211,46 @@ async function importSmsBackup(event) {
   try {
     const text = await file.text()
     let data = []
+    const parseSkipped = [] // 解析阶段跳过的行
     
     // 尝试解析为 JSON
     // 先检查是否是 NDJSON 格式（每行一个 JSON 对象）
     const trimmedText = text.trim()
     
     if (trimmedText.includes('\n') || trimmedText.includes('\r')) {
-      // 可能是 NDJSON 格式 - 尝试按行解析
+      // 可能是 NDJSON 格式 - 按行解析，跳过无效行（如 MMS 多媒体数据）
       const lines = trimmedText.split(/\r?\n/).filter(line => line.trim())
       const parsedLines = []
-      let isNdjson = true
+      let jsonLineCount = 0
+      let invalidLineCount = 0
       
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim()
+        if (!line) continue
+        
         try {
-          parsedLines.push(JSON.parse(line))
+          const parsed = JSON.parse(line)
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            parsedLines.push(parsed)
+            jsonLineCount++
+          } else {
+            // 不是对象（可能是数组或其他类型），跳过
+            invalidLineCount++
+            parseSkipped.push({ index: i, reason: `第 ${i + 1} 行: 不是有效的 JSON 对象（可能是 MMS 多媒体数据）` })
+          }
         } catch (e) {
-          isNdjson = false
-          break
+          // 该行 JSON 解析失败，可能是 MMS 多媒体数据，跳过
+          invalidLineCount++
+          parseSkipped.push({ index: i, reason: `第 ${i + 1} 行: JSON 解析失败 - ${e.message}` })
         }
       }
       
-      if (isNdjson && parsedLines.length > 0) {
+      // 如果大部分行都能解析为 JSON，认为是 NDJSON 格式
+      if (jsonLineCount > 0) {
         data = parsedLines
+        if (invalidLineCount > 0) {
+          console.log(`[Import] NDJSON: ${jsonLineCount} 条有效, ${invalidLineCount} 条跳过`)
+        }
       }
     }
     
@@ -270,7 +288,7 @@ async function importSmsBackup(event) {
       } catch (e) {
         importResult.value = {
           type: 'error',
-          message: `JSON/NDJSON 解析失败：${e.message}`,
+          message: `JSON 解析失败：${e.message}`,
           skipped: []
         }
         event.target.value = ''
@@ -281,15 +299,17 @@ async function importSmsBackup(event) {
     if (data.length === 0) {
       importResult.value = {
         type: 'error',
-        message: '文件中没有可导入的消息记录',
-        skipped: []
+        message: parseSkipped.length > 0 
+          ? `没有可导入的短信记录。${parseSkipped.length} 行无法解析（可能是 MMS 多媒体数据）`
+          : '文件中没有可导入的消息记录',
+        skipped: parseSkipped
       }
       event.target.value = ''
       return
     }
     
     // 校验所有记录
-    const skipped = []
+    const skipped = [...parseSkipped]
     const validRecords = []
     
     data.forEach((record, index) => {
