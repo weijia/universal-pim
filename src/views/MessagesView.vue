@@ -40,9 +40,9 @@
         {{ contactStore.compactMode ? '⊞ 标准' : '⊟ 紧凑' }}
       </button>
 
-      <label class="btn btn-secondary import-btn" title="导入短信备份 JSON/NDJSON 格式">
+      <label class="btn btn-secondary import-btn" title="导入短信备份 JSON/NDJSON/CSV 格式">
         📥 导入短信
-        <input type="file" accept=".json,.ndjson,.txt" @change="importSmsBackup" style="display: none;" />
+        <input type="file" accept=".json,.ndjson,.txt,.csv" @change="importSmsBackup" style="display: none;" />
       </label>
 
       <button 
@@ -126,7 +126,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useMessageStore } from '../stores/messageStore'
 import { useContactStore } from '../stores/contactStore'
 
@@ -154,6 +154,116 @@ const KNOWN_FIELDS = [
   'fake_cell_type', 'url_risky_type', 'favorite_date', 'sub_id'
 ]
 
+// CSV 字段映射（QQ 同步助手格式）
+const CSV_FIELD_MAP = {
+  '内容': 'body',
+  '对方名字': 'name',
+  '对方手机': 'address',
+  '发送时间': 'date',
+  '类型': 'type'
+}
+// CSV 允许的字段
+const CSV_KNOWN_FIELDS = ['内容', '对方名字', '对方手机', '发送时间', '类型']
+
+// 解析 CSV 行（处理引号内的逗号）
+function parseCSVLine(line) {
+  const result = []
+  let current = ''
+  let inQuotes = false
+  
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]
+    
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        // 转义的引号
+        current += '"'
+        i++
+      } else {
+        inQuotes = !inQuotes
+      }
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim())
+      current = ''
+    } else {
+      current += char
+    }
+  }
+  result.push(current.trim())
+  return result
+}
+
+// 解析 CSV 文件
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(line => line.trim())
+  if (lines.length === 0) return { headers: [], records: [] }
+  
+  // 解析表头
+  const headers = parseCSVLine(lines[0]).map(h => h.replace(/^"|"$/g, ''))
+  
+  // 检查未知字段
+  const unknownFields = headers.filter(h => !CSV_KNOWN_FIELDS.includes(h))
+  if (unknownFields.length > 0) {
+    throw new Error(`CSV 包含未知字段: "${unknownFields.join('", "')}"`)
+  }
+  
+  // 解析记录
+  const records = []
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCSVLine(lines[i]).map(v => v.replace(/^"|"$/g, ''))
+    const record = {}
+    headers.forEach((header, index) => {
+      record[header] = values[index] || ''
+    })
+    records.push(record)
+  }
+  
+  return { headers, records }
+}
+
+// 将 CSV 记录转换为标准短信格式
+function convertCSVRecord(record, index) {
+  // 检查必需字段
+  if (!record['内容'] || record['内容'].trim() === '') {
+    return { valid: false, reason: `第 ${index + 1} 行: 内容为空` }
+  }
+  if (!record['对方手机'] || record['对方手机'].trim() === '') {
+    return { valid: false, reason: `第 ${index + 1} 行: 对方手机为空` }
+  }
+  if (!record['发送时间'] || record['发送时间'].trim() === '') {
+    return { valid: false, reason: `第 ${index + 1} 行: 发送时间为空` }
+  }
+  
+  // 解析时间（格式: 2016/11/01 14:23:02）
+  const timeMatch = record['发送时间'].match(/(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})/)
+  if (!timeMatch) {
+    return { valid: false, reason: `第 ${index + 1} 行: 发送时间格式不正确，应为 "YYYY/MM/DD HH:MM:SS"` }
+  }
+  
+  const [, year, month, day, hour, minute, second] = timeMatch
+  const date = new Date(year, month - 1, day, hour, minute, second)
+  const timestamp = date.getTime()
+  
+  if (isNaN(timestamp) || timestamp <= 0) {
+    return { valid: false, reason: `第 ${index + 1} 行: 发送时间无效` }
+  }
+  
+  // 判断方向
+  const direction = record['类型'] === '发件箱' ? 'sent' : 'received'
+  
+  return {
+    valid: true,
+    record: {
+      _id: `csv_${timestamp}_${index}`,
+      address: record['对方手机'],
+      date: String(timestamp),
+      body: record['内容'],
+      type: direction === 'sent' ? '2' : '1',
+      _source: 'csv'
+    }
+  }
+}
+
 // 校验单条短信记录
 function validateSmsRecord(record, index) {
   const errors = []
@@ -174,11 +284,13 @@ function validateSmsRecord(record, index) {
     return { valid: false, reason: `第 ${index + 1} 条: ${errors.join('; ')}` }
   }
   
-  // 检查未知字段
-  const recordKeys = Object.keys(record)
-  const unknownFields = recordKeys.filter(k => !KNOWN_FIELDS.includes(k))
-  if (unknownFields.length > 0) {
-    return { valid: false, reason: `第 ${index + 1} 条: 包含未知字段 "${unknownFields.join('", "')}"` }
+  // 检查未知字段（CSV 导入的记录跳过此检查）
+  if (!record._source) {
+    const recordKeys = Object.keys(record)
+    const unknownFields = recordKeys.filter(k => !KNOWN_FIELDS.includes(k) && k !== '_source')
+    if (unknownFields.length > 0) {
+      return { valid: false, reason: `第 ${index + 1} 条: 包含未知字段 "${unknownFields.join('", "')}"` }
+    }
   }
   
   // 检查 body 不为空
@@ -212,87 +324,121 @@ async function importSmsBackup(event) {
     const text = await file.text()
     let data = []
     const parseSkipped = [] // 解析阶段跳过的行
+    let importType = ''
     
-    // 尝试解析为 JSON
-    // 先检查是否是 NDJSON 格式（每行一个 JSON 对象）
-    const trimmedText = text.trim()
+    // 检测文件类型
+    const fileExt = file.name.toLowerCase().split('.').pop()
+    const isCSV = fileExt === 'csv' || text.includes('内容","对方名字","对方手机","发送时间","类型"')
     
-    if (trimmedText.includes('\n') || trimmedText.includes('\r')) {
-      // 可能是 NDJSON 格式 - 按行解析，跳过无效行（如 MMS 多媒体数据）
-      const lines = trimmedText.split(/\r?\n/).filter(line => line.trim())
-      const parsedLines = []
-      let jsonLineCount = 0
-      let invalidLineCount = 0
-      
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim()
-        if (!line) continue
-        
-        try {
-          const parsed = JSON.parse(line)
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            parsedLines.push(parsed)
-            jsonLineCount++
-          } else {
-            // 不是对象（可能是数组或其他类型），跳过
-            invalidLineCount++
-            parseSkipped.push({ index: i, reason: `第 ${i + 1} 行: 不是有效的 JSON 对象（可能是 MMS 多媒体数据）` })
-          }
-        } catch (e) {
-          // 该行 JSON 解析失败，可能是 MMS 多媒体数据，跳过
-          invalidLineCount++
-          parseSkipped.push({ index: i, reason: `第 ${i + 1} 行: JSON 解析失败 - ${e.message}` })
-        }
-      }
-      
-      // 如果大部分行都能解析为 JSON，认为是 NDJSON 格式
-      if (jsonLineCount > 0) {
-        data = parsedLines
-        if (invalidLineCount > 0) {
-          console.log(`[Import] NDJSON: ${jsonLineCount} 条有效, ${invalidLineCount} 条跳过`)
-        }
-      }
-    }
-    
-    // 如果不是 NDJSON，尝试标准 JSON
-    if (data.length === 0) {
+    if (isCSV) {
+      // CSV 格式导入
+      importType = 'CSV'
       try {
-        const parsed = JSON.parse(text)
+        const { headers, records } = parseCSV(text)
         
-        if (Array.isArray(parsed)) {
-          data = parsed
-        } else if (parsed && typeof parsed === 'object') {
-          // 支持包裹在对象中的数组
-          if (parsed.messages && Array.isArray(parsed.messages)) {
-            data = parsed.messages
-          } else if (parsed.sms && Array.isArray(parsed.sms)) {
-            data = parsed.sms
+        // 转换 CSV 记录
+        for (let i = 0; i < records.length; i++) {
+          const result = convertCSVRecord(records[i], i)
+          if (result.valid) {
+            data.push(result.record)
+          } else {
+            parseSkipped.push({ index: i, reason: result.reason })
+          }
+        }
+      } catch (e) {
+        importResult.value = {
+          type: 'error',
+          message: `CSV 解析失败：${e.message}`,
+          skipped: []
+        }
+        event.target.value = ''
+        return
+      }
+    } else {
+      // JSON/NDJSON 格式导入
+      importType = 'JSON'
+      
+      // 尝试解析为 JSON
+      // 先检查是否是 NDJSON 格式（每行一个 JSON 对象）
+      const trimmedText = text.trim()
+      
+      if (trimmedText.includes('\n') || trimmedText.includes('\r')) {
+        // 可能是 NDJSON 格式 - 按行解析，跳过无效行（如 MMS 多媒体数据）
+        const lines = trimmedText.split(/\r?\n/).filter(line => line.trim())
+        const parsedLines = []
+        let jsonLineCount = 0
+        let invalidLineCount = 0
+        
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim()
+          if (!line) continue
+          
+          try {
+            const parsed = JSON.parse(line)
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              parsedLines.push(parsed)
+              jsonLineCount++
+            } else {
+              // 不是对象（可能是数组或其他类型），跳过
+              invalidLineCount++
+              parseSkipped.push({ index: i, reason: `第 ${i + 1} 行: 不是有效的 JSON 对象（可能是 MMS 多媒体数据）` })
+            }
+          } catch (e) {
+            // 该行 JSON 解析失败，可能是 MMS 多媒体数据，跳过
+            invalidLineCount++
+            parseSkipped.push({ index: i, reason: `第 ${i + 1} 行: JSON 解析失败 - ${e.message}` })
+          }
+        }
+        
+        // 如果大部分行都能解析为 JSON，认为是 NDJSON 格式
+        if (jsonLineCount > 0) {
+          data = parsedLines
+          if (invalidLineCount > 0) {
+            console.log(`[Import] NDJSON: ${jsonLineCount} 条有效, ${invalidLineCount} 条跳过`)
+          }
+        }
+      }
+      
+      // 如果不是 NDJSON，尝试标准 JSON
+      if (data.length === 0) {
+        try {
+          const parsed = JSON.parse(text)
+          
+          if (Array.isArray(parsed)) {
+            data = parsed
+          } else if (parsed && typeof parsed === 'object') {
+            // 支持包裹在对象中的数组
+            if (parsed.messages && Array.isArray(parsed.messages)) {
+              data = parsed.messages
+            } else if (parsed.sms && Array.isArray(parsed.sms)) {
+              data = parsed.sms
+            } else {
+              importResult.value = {
+                type: 'error',
+                message: 'JSON 格式不正确：需要数组，或包含 "messages"/"sms" 数组的对象',
+                skipped: []
+              }
+              event.target.value = ''
+              return
+            }
           } else {
             importResult.value = {
               type: 'error',
-              message: 'JSON 格式不正确：需要数组，或包含 "messages"/"sms" 数组的对象',
+              message: 'JSON 格式不正确：需要数组或 NDJSON 格式',
               skipped: []
             }
             event.target.value = ''
             return
           }
-        } else {
+        } catch (e) {
           importResult.value = {
             type: 'error',
-            message: 'JSON 格式不正确：需要数组或 NDJSON 格式',
+            message: `JSON 解析失败：${e.message}`,
             skipped: []
           }
           event.target.value = ''
           return
         }
-      } catch (e) {
-        importResult.value = {
-          type: 'error',
-          message: `JSON 解析失败：${e.message}`,
-          skipped: []
-        }
-        event.target.value = ''
-        return
       }
     }
     
@@ -300,7 +446,7 @@ async function importSmsBackup(event) {
       importResult.value = {
         type: 'error',
         message: parseSkipped.length > 0 
-          ? `没有可导入的短信记录。${parseSkipped.length} 行无法解析（可能是 MMS 多媒体数据）`
+          ? `没有可导入的短信记录。${parseSkipped.length} 行无法解析`
           : '文件中没有可导入的消息记录',
         skipped: parseSkipped
       }
@@ -308,16 +454,21 @@ async function importSmsBackup(event) {
       return
     }
     
-    // 校验所有记录
+    // 校验所有记录（CSV 导入的已在转换时校验，这里跳过）
     const skipped = [...parseSkipped]
     const validRecords = []
     
     data.forEach((record, index) => {
-      const result = validateSmsRecord(record, index)
-      if (result.valid) {
+      if (record._source === 'csv') {
+        // CSV 记录已经校验过
         validRecords.push(record)
       } else {
-        skipped.push({ index, reason: result.reason })
+        const result = validateSmsRecord(record, index)
+        if (result.valid) {
+          validRecords.push(record)
+        } else {
+          skipped.push({ index, reason: result.reason })
+        }
       }
     })
     
@@ -345,8 +496,8 @@ async function importSmsBackup(event) {
     // 导入有效记录
     let imported = 0
     for (const record of validRecords) {
-      // 检查是否已存在（通过 _id 前缀 sms_ 判断）
-      const existingId = `sms_${record._id}`
+      // 检查是否已存在（通过 _id 前缀判断）
+      const existingId = record._id.startsWith('csv_') ? record._id : `sms_${record._id}`
       const dateNum = Number(record.date)
       const timestamp = new Date(dateNum).toISOString()
       
@@ -371,7 +522,7 @@ async function importSmsBackup(event) {
     
     importResult.value = {
       type: 'success',
-      message: `成功导入 ${imported} 条短信消息` + (skipped.length > 0 ? `，跳过 ${skipped.length} 条` : ''),
+      message: `成功导入 ${imported} 条${importType}短信消息` + (skipped.length > 0 ? `，跳过 ${skipped.length} 条` : ''),
       skipped
     }
     
