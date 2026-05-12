@@ -96,7 +96,10 @@
         <h2 class="settings-title">关于</h2>
         <div class="about-info">
           <p><strong>Universal PIM</strong></p>
-          <p>版本: 1.0.0</p>
+          <p class="version-info">
+            <span class="version-tag">{{ versionInfo.tag }}</span>
+            <span class="build-time">{{ versionInfo.buildTime }}</span>
+          </p>
           <p>一个通用的联系人与消息管理工具</p>
           <p style="margin-top: 12px; font-size: 13px; color: var(--text-secondary);">
             数据存储在本地浏览器中，使用PouchDB管理。<br />
@@ -173,6 +176,12 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { syncService } from '../services/syncService'
 import { db } from '../services/db'
+
+// 版本信息 - 构建时会自动替换
+const versionInfo = {
+  tag: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'v1.0.0',
+  buildTime: typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : new Date().toLocaleString('zh-CN')
+}
 
 const showWebDAVModal = ref(false)
 const testing = ref(false)
@@ -365,6 +374,29 @@ async function importData(event) {
 
 .about-info p {
   margin-bottom: 8px;
+}
+
+.version-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.version-tag {
+  display: inline-block;
+  padding: 4px 12px;
+  background: var(--primary);
+  color: white;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.build-time {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-family: monospace;
 }
 
 .webdav-help {
