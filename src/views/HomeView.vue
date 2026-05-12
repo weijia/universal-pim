@@ -66,7 +66,7 @@
       </button>
     </div>
 
-    <div v-else class="contact-list" :class="{ compact: contactStore.compactMode, grid: contactStore.gridMode && !contactStore.compactMode }">
+    <div v-else class="contact-list" :class="{ compact: contactStore.compactMode, grid: contactStore.gridMode }">
       <div 
         v-for="contact in contactStore.searchResults" 
         :key="contact._id"
@@ -142,7 +142,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useContactStore } from '../stores/contactStore'
 
@@ -256,14 +256,38 @@ defineExpose({
 
 .contact-card.compact {
   padding: 8px 12px;
+}
+
+/* 网格模式下紧凑卡片 */
+.contact-list.grid.compact {
+  gap: 8px;
+}
+
+.contact-list.grid.compact .contact-card.compact {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.contact-card.compact {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.contact-card.compact .contact-header {
+.contact-list.grid .contact-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.contact-card .contact-header {
   margin-bottom: 0;
+}
+
+.contact-card.compact .contact-header {
   flex: 1;
 }
 
@@ -277,11 +301,20 @@ defineExpose({
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 150px;
+}
+
+.contact-list.grid.compact .contact-info-compact {
+  max-width: none;
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
 }
 
 @media (max-width: 480px) {
-  .contact-card.compact {
+  .contact-card.compact:not(.grid .contact-card.compact) {
     flex-direction: column;
     align-items: flex-start;
     gap: 4px;

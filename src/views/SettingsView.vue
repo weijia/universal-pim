@@ -38,16 +38,16 @@
       <div class="settings-section">
         <h2 class="settings-title">WebDAV 同步</h2>
         
-        <div class="sync-status">
+        <div class="sync-status" :class="{ error: syncError }">
           <span 
             class="status-dot" 
             :class="{
               success: syncStatus === 'synced',
               warning: syncStatus === 'syncing',
-              error: syncStatus === 'error'
+              error: syncError
             }"
           ></span>
-          <span>{{ syncStatusText }}</span>
+          <span>{{ syncError || syncStatusText }}</span>
         </div>
 
         <div class="setting-item">
@@ -189,6 +189,7 @@ const syncing = ref(false)
 const restoring = ref(false)
 const saving = ref(false)
 const lastSyncTime = ref(null)
+const syncError = ref(null)
 const webdavConfig = ref({ url: '', username: '', password: '', enabled: false })
 
 const webdavForm = ref({
@@ -224,6 +225,11 @@ onMounted(async () => {
     if (status.lastSyncTime) {
       lastSyncTime.value = status.lastSyncTime
     }
+    if (status.lastError) {
+      syncError.value = status.lastError
+    } else {
+      syncError.value = null
+    }
   })
   
   // 从设置中获取上次同步时间
@@ -254,6 +260,7 @@ async function testConnection() {
 
 async function syncNow() {
   syncing.value = true
+  syncError.value = null
   try {
     const success = await syncService.sync()
     if (success) {
@@ -261,7 +268,9 @@ async function syncNow() {
       lastSyncTime.value = new Date().toISOString()
       alert('同步成功！')
     } else {
-      alert('同步失败，请检查WebDAV配置')
+      const errorMsg = syncService.getLastError()
+      syncError.value = errorMsg || '同步失败，请检查WebDAV配置和浏览器控制台日志'
+      alert(syncError.value)
     }
   } finally {
     syncing.value = false
