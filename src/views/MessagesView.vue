@@ -33,6 +33,14 @@
       </select>
 
       <button 
+        class="btn btn-secondary" 
+        @click="contactStore.toggleCompactMode()"
+        :title="contactStore.compactMode ? '切换为标准模式' : '切换为紧凑模式'"
+      >
+        {{ contactStore.compactMode ? '⊞ 标准' : '⊟ 紧凑' }}
+      </button>
+
+      <button 
         v-if="hasActiveFilters" 
         class="btn btn-secondary" 
         @click="clearFilters"
@@ -41,7 +49,7 @@
       </button>
     </div>
 
-    <div class="message-list">
+    <div class="message-list" :class="{ compact: contactStore.compactMode }">
       <div v-if="messageStore.loading" class="empty-state">
         加载中...
       </div>
@@ -56,26 +64,29 @@
         <div v-for="(group, date) in groupedByDate" :key="date" class="message-date-group">
           <div class="date-header">{{ date }}</div>
           
-          <div v-for="msg in group" :key="msg._id" class="message-item">
-            <div class="message-header">
-              <div class="message-sender">
-                <span class="channel-badge" :class="getChannelClass(msg.channel)">
-                  {{ msg.channel }}
-                </span>
-                <router-link 
-                  v-if="msg.contactId" 
-                  :to="`/contact/${msg.contactId}`"
-                  class="contact-link"
-                >
-                  {{ msg.contactName || '未知联系人' }}
-                </router-link>
-                <span v-else class="contact-link">{{ msg.contactName || '未知联系人' }}</span>
+          <div class="message-group-list" :class="{ compact: contactStore.compactMode }">
+            <div v-for="msg in group" :key="msg._id" class="message-item" :class="{ compact: contactStore.compactMode }">
+              <div class="message-header">
+                <div class="message-sender">
+                  <span class="channel-badge" :class="getChannelClass(msg.channel)">
+                    {{ msg.channel }}
+                  </span>
+                  <router-link 
+                    v-if="msg.contactId" 
+                    :to="`/contact/${msg.contactId}`"
+                    class="contact-link"
+                  >
+                    {{ msg.contactName || '未知联系人' }}
+                  </router-link>
+                  <span v-else class="contact-link">{{ msg.contactName || '未知联系人' }}</span>
+                </div>
+                <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
               </div>
-              <span>{{ formatTime(msg.timestamp) }}</span>
-            </div>
-            <div class="message-content">{{ msg.content }}</div>
-            <div class="message-actions">
-              <button class="btn-icon" @click="deleteMessage(msg)" title="删除">🗑️</button>
+              <div v-if="!contactStore.compactMode" class="message-content">{{ msg.content }}</div>
+              <div v-else class="message-content-compact">{{ msg.content }}</div>
+              <div v-if="!contactStore.compactMode" class="message-actions">
+                <button class="btn-icon" @click="deleteMessage(msg)" title="删除">🗑️</button>
+              </div>
             </div>
           </div>
         </div>
@@ -185,6 +196,41 @@ async function deleteMessage(msg) {
   margin-bottom: 12px;
 }
 
+.message-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.message-group-list.compact {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+@media (min-width: 1200px) {
+  .message-group-list.compact {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1600px) {
+  .message-group-list.compact {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.message-item {
+  padding: 16px;
+  background: var(--card-bg);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.message-item.compact {
+  padding: 10px 12px;
+}
+
 .message-sender {
   display: flex;
   align-items: center;
@@ -213,6 +259,20 @@ async function deleteMessage(msg) {
 
 .contact-link:hover {
   text-decoration: underline;
+}
+
+.message-time {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.message-content-compact {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .message-actions {

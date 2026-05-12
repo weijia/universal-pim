@@ -35,13 +35,22 @@
     </div>
 
     <div class="header-actions">
-      <button 
-        class="btn btn-secondary" 
-        @click="contactStore.toggleCompactMode()"
-        :title="contactStore.compactMode ? '切换为标准模式' : '切换为紧凑模式'"
-      >
-        {{ contactStore.compactMode ? '⊞ 标准' : '⊟ 紧凑' }}
-      </button>
+      <div class="view-modes">
+        <button 
+          class="btn btn-secondary" 
+          @click="contactStore.toggleCompactMode()"
+          :title="contactStore.compactMode ? '切换为标准模式' : '切换为紧凑模式'"
+        >
+          {{ contactStore.compactMode ? '⊞ 标准' : '⊟ 紧凑' }}
+        </button>
+        <button 
+          class="btn btn-secondary" 
+          @click="contactStore.toggleGridMode()"
+          :title="contactStore.gridMode ? '切换为列表布局' : '切换为网格布局'"
+        >
+          {{ contactStore.gridMode ? '☰ 列表' : '⊞ 网格' }}
+        </button>
+      </div>
       <button class="btn btn-primary" @click="showAddModal = true">+ 新建联系人</button>
     </div>
 
@@ -57,7 +66,7 @@
       </button>
     </div>
 
-    <div v-else class="contact-list" :class="{ compact: contactStore.compactMode }">
+    <div v-else class="contact-list" :class="{ compact: contactStore.compactMode, grid: contactStore.gridMode && !contactStore.compactMode }">
       <div 
         v-for="contact in contactStore.searchResults" 
         :key="contact._id"
@@ -228,6 +237,18 @@ defineExpose({
   color: var(--text);
 }
 
+.header-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.view-modes {
+  display: flex;
+  gap: 8px;
+}
+
 /* 紧凑模式样式 */
 .contact-list.compact {
   gap: 4px;
@@ -268,6 +289,16 @@ defineExpose({
   
   .contact-info-compact {
     max-width: 100%;
+  }
+  
+  .header-actions {
+    flex-direction: column;
+    gap: 12px;
+    align-items: stretch;
+  }
+  
+  .view-modes {
+    justify-content: center;
   }
 }
 </style>

@@ -8,6 +8,7 @@ export const useContactStore = defineStore('contacts', () => {
   const searchQuery = ref('')
   const showArchived = ref(false)
   const compactMode = ref(false)
+  const gridMode = ref(false)
 
   // 计算属性：活跃联系人
   const activeContacts = computed(() => 
@@ -51,9 +52,11 @@ export const useContactStore = defineStore('contacts', () => {
     try {
       await db.init()
       contacts.value = await db.getAllContacts()
-      // 从设置中读取紧凑模式偏好
+      // 从设置中读取显示模式偏好
       const savedCompactMode = await db.getSetting('compactMode', false)
+      const savedGridMode = await db.getSetting('gridMode', false)
       compactMode.value = savedCompactMode
+      gridMode.value = savedGridMode
     } catch (error) {
       console.error('Failed to load contacts:', error)
     } finally {
@@ -65,6 +68,12 @@ export const useContactStore = defineStore('contacts', () => {
   async function toggleCompactMode() {
     compactMode.value = !compactMode.value
     await db.setSetting('compactMode', compactMode.value)
+  }
+
+  // 切换网格模式
+  async function toggleGridMode() {
+    gridMode.value = !gridMode.value
+    await db.setSetting('gridMode', gridMode.value)
   }
 
   // 添加联系人
@@ -135,12 +144,14 @@ export const useContactStore = defineStore('contacts', () => {
     searchQuery,
     showArchived,
     compactMode,
+    gridMode,
     activeContacts,
     archivedContacts,
     sortedActiveContacts,
     searchResults,
     init,
     toggleCompactMode,
+    toggleGridMode,
     addContact,
     updateContact,
     deleteContact,
