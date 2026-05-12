@@ -74,7 +74,7 @@
       </div>
     </div>
 
-    <div class="message-list" :class="{ compact: contactStore.compactMode }">
+    <div class="message-list" :class="{ compact: contactStore.compactMode }" ref="listRef">
       <div v-if="messageStore.loading" class="empty-state">
         加载中...
       </div>
@@ -86,7 +86,7 @@
 
       <template v-else>
         <!-- 按日期分组显示 -->
-        <div v-for="(group, date) in groupedByDate" :key="date" class="message-date-group">
+        <div v-for="(group, date) in visibleGroups" :key="date" class="message-date-group">
           <div class="date-header">{{ date }}</div>
           
           <div class="message-group-list" :class="{ compact: contactStore.compactMode }">
@@ -118,15 +118,16 @@
       </template>
     </div>
 
-    <!-- 统计信息 -->
-    <div v-if="messageStore.filteredMessages.length > 0" class="stats-bar">
-      <span>共 {{ messageStore.filteredMessages.length }} 条消息</span>
+    <!-- 分页信息 -->
+    <div v-if="messageStore.filteredMessages.length > PAGE_SIZE" class="pagination-info">
+      <span v-if="!allLoaded">已显示 {{ displayedCount }} / {{ messageStore.filteredMessages.length }} 条消息</span>
+      <span v-else>共 {{ messageStore.filteredMessages.length }} 条消息，已全部显示</span>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useMessageStore } from '../stores/messageStore'
 import { useContactStore } from '../stores/contactStore'
 
@@ -137,6 +138,9 @@ const contacts = computed(() => contactStore.contacts)
 
 const importResult = ref(null)
 const showSkipped = ref(false)
+const listRef = ref(null)
+const displayCount = ref(100)
+const PAGE_SIZE = 100
 
 const hasActiveFilters = computed(() => 
   messageStore.filterContact || messageStore.filterChannel || messageStore.searchQuery
@@ -558,6 +562,72 @@ const groupedByDate = computed(() => {
   return groups
 })
 
+// 分页：可见的消息
+const visibleMessages = computed(() => {
+  return messageStore.filteredMessages.slice(0, displayCount.value)
+})
+
+// 分页：按日期分组（只显示已加载的消息）
+const visibleGroups = computed(() => {
+  const groups = {}
+  
+  visibleMessages.value.forEach(msg => {
+    const date = new Date(msg.timestamp).toLocaleDateString('zh-CN', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'long'
+    })
+    
+    if (!groups[date]) {
+      groups[date] = []
+    }
+    groups[date].push(msg)
+  })
+  
+  return groups
+})
+
+const displayedCount = computed(() => visibleMessages.value.length)
+
+const allLoaded = computed(() => {
+  return displayCount.value >= messageStore.filteredMessages.length
+})
+
+// 重置分页当过滤条件变化
+watch(() => messageStore.searchQuery, () => {
+  displayCount.value = PAGE_SIZE
+})
+
+watch(() => messageStore.filterContact, () => {
+  displayCount.value = PAGE_SIZE
+})
+
+watch(() => messageStore.filterChannel, () => {
+  displayCount.value = PAGE_SIZE
+})
+
+// 滚动加载
+function handleScroll() {
+  if (!listRef.value || allLoaded.value) return
+  
+  const { scrollTop, scrollHeight, clientHeight } = listRef.value
+  if (scrollTop + clientHeight >= scrollHeight - 200) {
+    displayCount.value = Math.min(
+      displayCount.value + PAGE_SIZE,
+      messageStore.filteredMessages.length
+    )
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('scroll', handleScroll, true)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', handleScroll, true)
+})
+
 function formatTime(dateStr) {
   return new Date(dateStr).toLocaleTimeString('zh-CN', {
     hour: '2-digit',
@@ -740,6 +810,13 @@ async function deleteMessage(msg) {
   font-size: 14px;
   color: var(--text-secondary);
   text-align: center;
+}
+
+.pagination-info {
+  text-align: center;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 /* 导入结果提示 */

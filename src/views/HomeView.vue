@@ -66,34 +66,42 @@
       </button>
     </div>
 
-    <div v-else class="contact-list" :class="{ compact: contactStore.compactMode, grid: contactStore.gridMode }">
-      <div 
-        v-for="contact in contactStore.searchResults" 
-        :key="contact._id"
-        class="contact-card"
-        :class="{ archived: contact.archived, compact: contactStore.compactMode }"
-        @click="goToContact(contact._id)"
-      >
-        <div class="contact-header">
-          <span class="contact-name">
-            {{ contact.name }}
-            <span v-if="contact.favorite" class="badge badge-favorite">常用</span>
-            <span v-if="contact.archived" class="badge badge-archived">已归档</span>
-          </span>
+    <div v-else>
+      <div class="contact-list" :class="{ compact: contactStore.compactMode, grid: contactStore.gridMode }" ref="listRef">
+        <div 
+          v-for="contact in visibleContacts" 
+          :key="contact._id"
+          class="contact-card"
+          :class="{ archived: contact.archived, compact: contactStore.compactMode }"
+          @click="goToContact(contact._id)"
+        >
+          <div class="contact-header">
+            <span class="contact-name">
+              {{ contact.name }}
+              <span v-if="contact.favorite" class="badge badge-favorite">常用</span>
+              <span v-if="contact.archived" class="badge badge-archived">已归档</span>
+            </span>
+          </div>
+          <div v-if="!contactStore.compactMode" class="contact-info">
+            {{ contact.phone || contact.email || '无联系方式' }}
+            <span v-if="contact.lastContacted">
+              • 最近联系: {{ formatRelativeTime(contact.lastContacted) }}
+            </span>
+          </div>
+          <div v-if="!contactStore.compactMode && contact.tags && contact.tags.length" class="contact-tags">
+            <span v-for="tag in contact.tags" :key="tag" class="tag">{{ tag }}</span>
+          </div>
+          <!-- 紧凑模式下显示简化信息 -->
+          <div v-if="contactStore.compactMode" class="contact-info-compact">
+            {{ contact.phone || contact.email || '无联系方式' }}
+          </div>
         </div>
-        <div v-if="!contactStore.compactMode" class="contact-info">
-          {{ contact.phone || contact.email || '无联系方式' }}
-          <span v-if="contact.lastContacted">
-            • 最近联系: {{ formatRelativeTime(contact.lastContacted) }}
-          </span>
-        </div>
-        <div v-if="!contactStore.compactMode && contact.tags && contact.tags.length" class="contact-tags">
-          <span v-for="tag in contact.tags" :key="tag" class="tag">{{ tag }}</span>
-        </div>
-        <!-- 紧凑模式下显示简化信息 -->
-        <div v-if="contactStore.compactMode" class="contact-info-compact">
-          {{ contact.phone || contact.email || '无联系方式' }}
-        </div>
+      </div>
+
+      <!-- 分页信息 -->
+      <div v-if="contactStore.searchResults.length > PAGE_SIZE" class="pagination-info">
+        <span v-if="!allLoaded">已显示 {{ visibleContacts.length }} / {{ contactStore.searchResults.length }} 个联系人</span>
+        <span v-else>共 {{ contactStore.searchResults.length }} 个联系人，已全部显示</span>
       </div>
     </div>
 
@@ -142,7 +150,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useContactStore } from '../stores/contactStore'
 
@@ -152,12 +160,54 @@ const contactStore = useContactStore()
 const showAddModal = ref(false)
 const editingContact = ref(null)
 const tagsInput = ref('')
+const listRef = ref(null)
+const displayCount = ref(50)
+const PAGE_SIZE = 50
 
 const formData = ref({
   name: '',
   phone: '',
   email: '',
   notes: ''
+})
+
+// 可见联系人（分页）
+const visibleContacts = computed(() => {
+  return contactStore.searchResults.slice(0, displayCount.value)
+})
+
+const allLoaded = computed(() => {
+  return displayCount.value >= contactStore.searchResults.length
+})
+
+// 重置分页当搜索条件变化
+watch(() => contactStore.searchQuery, () => {
+  displayCount.value = PAGE_SIZE
+})
+
+watch(() => contactStore.showArchived, () => {
+  displayCount.value = PAGE_SIZE
+})
+
+// 滚动加载
+function handleScroll() {
+  if (!listRef.value || allLoaded.value) return
+  
+  const { scrollTop, scrollHeight, clientHeight } = listRef.value
+  if (scrollTop + clientHeight >= scrollHeight - 100) {
+    displayCount.value = Math.min(
+      displayCount.value + PAGE_SIZE,
+      contactStore.searchResults.length
+    )
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('scroll', handleScroll, true)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', handleScroll, true)
 })
 
 // 格式化相对时间
@@ -311,6 +361,13 @@ defineExpose({
   display: -webkit-box;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
+}
+
+.pagination-info {
+  text-align: center;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 480px) {
