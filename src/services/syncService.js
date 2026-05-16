@@ -1,6 +1,9 @@
 import { sync } from 'universal-sync-v2'
-import { WebDAVFileSystem } from 'zen-fs-webdav'
+import * as zenFsWebdav from 'zen-fs-webdav'
 import { db } from './db'
+
+// 获取 WebDAVFileSystem 类（处理不同的导出方式）
+const WebDAVFileSystem = zenFsWebdav.WebDAVFileSystem || zenFsWebdav.default?.WebDAVFileSystem || zenFsWebdav
 
 class SyncService {
   constructor() {
@@ -45,6 +48,11 @@ class SyncService {
     
     try {
       console.log('[Sync] Initializing WebDAV connection to:', config.url)
+      console.log('[Sync] WebDAVFileSystem type:', typeof WebDAVFileSystem)
+      
+      if (typeof WebDAVFileSystem !== 'function') {
+        throw new Error('WebDAVFileSystem is not a constructor. Available exports: ' + Object.keys(zenFsWebdav).join(', '))
+      }
       
       this.webdavFs = new WebDAVFileSystem({
         baseUrl: config.url,
@@ -212,6 +220,11 @@ class SyncService {
 
     try {
       console.log('[TestConnection] Testing connection to:', config.url)
+      console.log('[TestConnection] WebDAVFileSystem type:', typeof WebDAVFileSystem)
+      
+      if (typeof WebDAVFileSystem !== 'function') {
+        throw new Error('WebDAVFileSystem is not a constructor')
+      }
       
       this.webdavFs = new WebDAVFileSystem({
         baseUrl: config.url,
