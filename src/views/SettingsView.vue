@@ -73,20 +73,10 @@
         <div v-if="hasWebDAVConfig" class="setting-item">
           <div class="setting-info">
             <h3>手动同步</h3>
-            <p>立即将数据同步到WebDAV服务器</p>
+            <p>使用 universal-sync-v2 增量同步数据</p>
           </div>
           <button class="btn btn-primary" @click="syncNow" :disabled="syncService.isSyncing">
             {{ syncService.isSyncing ? '同步中...' : '同步' }}
-          </button>
-        </div>
-
-        <div v-if="hasWebDAVConfig" class="setting-item">
-          <div class="setting-info">
-            <h3>从WebDAV恢复</h3>
-            <p>从服务器下载并恢复数据</p>
-          </div>
-          <button class="btn btn-secondary" @click="restoreFromServer" :disabled="restoring">
-            {{ restoring ? '恢复中...' : '恢复' }}
           </button>
         </div>
       </div>
@@ -103,7 +93,7 @@
           <p>一个通用的联系人与消息管理工具</p>
           <p style="margin-top: 12px; font-size: 13px; color: var(--text-secondary);">
             数据存储在本地浏览器中，使用PouchDB管理。<br />
-            支持WebDAV远程同步备份。
+            使用 universal-sync-v2 + zen-fs-webdav 进行增量同步。
           </p>
         </div>
       </div>
@@ -158,6 +148,16 @@
             />
           </div>
 
+          <div class="form-group">
+            <label>同步路径</label>
+            <input 
+              v-model="webdavForm.syncPath" 
+              type="text" 
+              placeholder="/universal-pim"
+            />
+            <small style="color: var(--text-secondary);">WebDAV 上的同步目录路径</small>
+          </div>
+
           <div class="form-actions">
             <button type="button" class="btn btn-secondary" @click="showWebDAVModal = false">
               取消
@@ -186,17 +186,17 @@ const versionInfo = {
 const showWebDAVModal = ref(false)
 const testing = ref(false)
 const syncing = ref(false)
-const restoring = ref(false)
 const saving = ref(false)
 const lastSyncTime = ref(null)
 const syncError = ref(null)
-const webdavConfig = ref({ url: '', username: '', password: '', enabled: false })
+const webdavConfig = ref({ url: '', username: '', password: '', enabled: false, syncPath: '/universal-pim' })
 
 const webdavForm = ref({
   enabled: false,
   url: '',
   username: '',
-  password: ''
+  password: '',
+  syncPath: '/universal-pim'
 })
 
 const hasWebDAVConfig = computed(() => 
@@ -274,23 +274,6 @@ async function syncNow() {
     }
   } finally {
     syncing.value = false
-  }
-}
-
-async function restoreFromServer() {
-  if (!confirm('这将覆盖本地数据，确定要继续吗？')) return
-  
-  restoring.value = true
-  try {
-    const result = await syncService.restoreFromWebDAV()
-    if (result.success) {
-      alert('恢复成功！请刷新页面查看数据。')
-      window.location.reload()
-    } else {
-      alert(`恢复失败: ${result.message}`)
-    }
-  } finally {
-    restoring.value = false
   }
 }
 

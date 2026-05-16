@@ -1,3 +1,5 @@
+import { sync } from 'universal-sync-v2'
+import { WebDAVFileSystem } from 'zen-fs-webdav'
 import { db } from './db'
 
 class SyncService {
@@ -7,16 +9,60 @@ class SyncService {
     this.lastSyncTime = null
     this.listeners = []
     this.lastError = null
+    this.webdavFs = null
+    this._syncPath = '/universal-pim'
   }
 
-  // 获取最后错误
   getLastError() {
     return this.lastError
   }
 
-  // 清除错误
   clearError() {
     this.lastError = null
+  }
+
+  // 获取 zen-fs-webdav 的 fs 接口（适配 universal-sync-v2 需要的 fs.promises 接口）
+  _getFsPromises() {
+    if (!this.webdavFs) return null
+    
+    // 适配 zen-fs-webdav 接口为 universal-sync-v2 需要的 fs.promises 格式
+    return {
+      readFile: (path) => this.webdavFs.readFile(path),
+      writeFile: (path, data) => this.webdavFs.writeFile(path, data),
+      readdir: (path) => this.webdavFs.readdir(path),
+      mkdir: (path, options) => this.webdavFs.mkdir(path, options),
+      stat: (path) => this.webdavFs.stat(path),
+      unlink: (path) => this.webdavFs.unlink(path),
+      rmdir: (path, options) => this.webdavFs.rmdir(path, options),
+      exists: (path) => this.webdavFs.exists(path),
+      copy: (src, dest) => this.webdavFs.copy(src, dest),
+    }
+  }
+
+  // 初始化 WebDAV 连接
+  async _initWebDAV(config) {
+    if (this.webdavFs) return true
+    
+    try {
+      console.log('[Sync] Initializing WebDAV connection to:', config.url)
+      
+      this.webdavFs = new WebDAVFileSystem({
+        baseUrl: config.url,
+        username: config.username,
+        password: config.password,
+      })
+      
+      // 确保同步目录存在
+      await this.webdavFs.mkdir(this._syncPath, { recursive: true })
+      
+      console.log('[Sync] WebDAV connection initialized successfully')
+      return true
+    } catch (error) {
+      console.error('[Sync] Failed to initialize WebDAV:', error)
+      this.lastError = 'WebDAV 连接失败: ' + (error.message || '未知错误')
+      this.webdavFs = null
+      return false
+    }
   }
 
   // WebDAV配置管理
@@ -25,20 +71,22 @@ class SyncService {
     const username = await db.getSetting('webdav_username', '')
     const password = await db.getSetting('webdav_password', '')
     const enabled = await db.getSetting('webdav_enabled', false)
+    const syncPath = await db.getSetting('webdav_sync_path', '/universal-pim')
     
-    return { url, username, password, enabled }
+    return { url, username, password, enabled, syncPath }
   }
 
   async saveWebDAVConfig(config) {
     this.clearError()
+    this.webdavFs = null // 重置连接
     await db.setSetting('webdav_url', config.url)
     await db.setSetting('webdav_username', config.username)
     await db.setSetting('webdav_password', config.password)
     await db.setSetting('webdav_enabled', config.enabled)
+    await db.setSetting('webdav_sync_path', config.syncPath || '/universal-pim')
     this.notifyListeners()
   }
 
-  // 同步状态
   getSyncStatus() {
     return {
       isSyncing: this.isSyncing,
@@ -47,7 +95,6 @@ class SyncService {
     }
   }
 
-  // 添加监听器
   addListener(callback) {
     this.listeners.push(callback)
     return () => {
@@ -60,7 +107,6 @@ class SyncService {
     this.listeners.forEach(l => l(status))
   }
 
-  // 自动同步 (轮询方式，因为浏览器环境无法长期运行)
   startAutoSync(intervalMs = 60000) {
     this.clearError()
     if (this.syncTimer) {
@@ -71,7 +117,6 @@ class SyncService {
       await this.sync()
     }, intervalMs)
     
-    // 立即执行一次
     this.sync()
   }
 
@@ -82,7 +127,7 @@ class SyncService {
     }
   }
 
-  // 手动同步
+  // 使用 universal-sync-v2 进行增量同步
   async sync() {
     this.clearError()
     
@@ -104,70 +149,48 @@ class SyncService {
       return false
     }
 
-    console.log('[Sync] Starting sync...')
+    console.log('[Sync] Starting sync with universal-sync-v2...')
     this.isSyncing = true
     this.notifyListeners()
 
     try {
-      // 导出数据
-      console.log('[Sync] Exporting data...')
-      const data = await db.exportData()
-      const jsonStr = JSON.stringify(data, null, 2)
-      const blob = new Blob([jsonStr], { type: 'application/json' })
-      console.log('[Sync] Data exported, size:', jsonStr.length, 'bytes')
-      
-      // 上传到WebDAV - 使用带认证的请求
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-      const filename = `universal-pim-${timestamp}.json`
-      
-      // 确保URL格式正确
-      let baseUrl = config.url.replace(/\/$/, '')
-      
-      console.log('[Sync] Uploading to:', baseUrl + '/' + filename)
-      
-      const headers = {
-        'Content-Type': 'application/json'
+      // 初始化 WebDAV 连接
+      const initialized = await this._initWebDAV(config)
+      if (!initialized) {
+        this.isSyncing = false
+        this.notifyListeners()
+        return false
       }
-      
-      // 添加认证信息
-      if (config.username && config.password) {
-        const auth = btoa(config.username + ':' + config.password)
-        headers['Authorization'] = 'Basic ' + auth
-      }
-      
-      const response = await fetch(baseUrl + '/' + filename, {
-        method: 'PUT',
-        headers,
-        body: blob
-      })
 
-      console.log('[Sync] Upload response status:', response.status, response.statusText)
-      
-      if (!response.ok && response.status !== 201 && response.status !== 204) {
-        let errorText = `HTTP ${response.status}: ${response.statusText}`
+      this._syncPath = config.syncPath || '/universal-pim'
+      const fsPromises = this._getFsPromises()
+
+      // 对每个 PouchDB 数据库进行同步
+      const dbs = [
+        { name: 'contacts', instance: db.contactsDB },
+        { name: 'messages', instance: db.messagesDB },
+        { name: 'settings', instance: db.settingsDB }
+      ]
+
+      for (const { name, instance } of dbs) {
+        if (!instance) continue
+        
+        const dbPath = this._syncPath + '/' + name
+        console.log(`[Sync] Syncing ${name} to ${dbPath}...`)
+        
         try {
-          const errorBody = await response.text()
-          if (errorBody) errorText += ' - ' + errorBody.substring(0, 200)
-        } catch (e) {}
-        throw new Error(errorText)
-      }
-
-      // 也保存一份最新的备份
-      console.log('[Sync] Saving latest backup...')
-      const latestResponse = await fetch(baseUrl + '/universal-pim-latest.json', {
-        method: 'PUT',
-        headers,
-        body: blob
-      })
-
-      if (!latestResponse.ok && latestResponse.status !== 201 && latestResponse.status !== 204) {
-        console.warn('[Sync] Failed to save latest backup:', latestResponse.status)
+          await sync(instance, fsPromises, dbPath)
+          console.log(`[Sync] ${name} synced successfully`)
+        } catch (error) {
+          console.error(`[Sync] Failed to sync ${name}:`, error)
+          // 继续同步其他数据库
+        }
       }
 
       this.lastSyncTime = new Date()
       this.isSyncing = false
       this.notifyListeners()
-      console.log('[Sync] Completed successfully!')
+      console.log('[Sync] All databases synced successfully!')
       return true
     } catch (error) {
       console.error('[Sync] Error:', error)
@@ -175,56 +198,6 @@ class SyncService {
       this.isSyncing = false
       this.notifyListeners()
       return false
-    }
-  }
-
-  // 从WebDAV恢复数据
-  async restoreFromWebDAV() {
-    this.clearError()
-    const config = await this.getWebDAVConfig()
-    
-    if (!config.enabled) {
-      return { success: false, message: 'WebDAV 同步未启用' }
-    }
-    
-    if (!config.url) {
-      return { success: false, message: 'WebDAV URL 未配置' }
-    }
-
-    try {
-      console.log('[Restore] Starting restore...')
-      
-      // 确保URL格式正确
-      let baseUrl = config.url.replace(/\/$/, '')
-      
-      const headers = {}
-      if (config.username && config.password) {
-        const auth = btoa(config.username + ':' + config.password)
-        headers['Authorization'] = 'Basic ' + auth
-      }
-      
-      // 尝试获取最新的备份
-      const response = await fetch(baseUrl + '/universal-pim-latest.json', { headers })
-      
-      console.log('[Restore] Response status:', response.status)
-      
-      if (!response.ok) {
-        if (response.status === 404) {
-          return { success: false, message: '服务器上没有找到备份文件' }
-        }
-        return { success: false, message: `获取备份失败: HTTP ${response.status}` }
-      }
-
-      const data = await response.json()
-      console.log('[Restore] Data received, contacts:', data.contacts?.length, 'messages:', data.messages?.length)
-      
-      await db.importData(data)
-      
-      return { success: true, message: '恢复成功', data }
-    } catch (error) {
-      console.error('[Restore] Error:', error)
-      this.lastError = error.message || '恢复失败'
-      return { success: false, message: '恢复失败: ' + (error.message || '未知错误') }
     }
   }
 
@@ -240,30 +213,24 @@ class SyncService {
     try {
       console.log('[TestConnection] Testing connection to:', config.url)
       
-      // 确保URL格式正确
-      let testUrl = config.url.replace(/\/$/, '')
-      
-      const headers = {
-        'Depth': '0'
-      }
-      
-      if (config.username && config.password) {
-        const auth = btoa(config.username + ':' + config.password)
-        headers['Authorization'] = 'Basic ' + auth
-      }
-      
-      const response = await fetch(testUrl, {
-        method: 'PROPFIND',
-        headers
+      this.webdavFs = new WebDAVFileSystem({
+        baseUrl: config.url,
+        username: config.username,
+        password: config.password,
       })
 
-      console.log('[TestConnection] Response:', response.status)
+      // 尝试创建并读取目录
+      const testPath = this._syncPath
+      await this.webdavFs.mkdir(testPath, { recursive: true })
+      const exists = await this.webdavFs.exists(testPath)
+      
+      console.log('[TestConnection] Directory exists:', exists)
 
-      if (response.ok || response.status === 207) {
+      if (exists) {
         return { success: true, message: '连接成功！服务器响应正常。' }
       }
 
-      return { success: false, message: `连接失败: HTTP ${response.status} ${response.statusText}` }
+      return { success: false, message: '无法创建同步目录' }
     } catch (error) {
       console.error('[TestConnection] Error:', error)
       this.lastError = error.message
