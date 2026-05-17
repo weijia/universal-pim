@@ -85,7 +85,7 @@
       <div class="settings-section">
         <h2 class="settings-title">关于</h2>
         <div class="about-info">
-          <p><strong>Universal PIM</strong></p>
+          <p><strong><a href="https://github.com/weijia/universal-pim" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">Universal PIM</a></strong></p>
           <p class="version-info">
             <span class="version-tag">{{ versionInfo.tag }}</span>
             <span class="build-time">{{ versionInfo.buildTime }}</span>

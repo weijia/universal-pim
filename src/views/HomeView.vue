@@ -1,7 +1,7 @@
 <template>
   <div>
     <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
-      <h1 style="font-size: 28px; font-weight: 700;">Universal PIM</h1>
+      <h1 style="font-size: 28px; font-weight: 700;"><a href="https://github.com/weijia/universal-pim" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">Universal PIM</a></h1>
       <nav style="display: flex; gap: 16px;">
         <router-link to="/" class="nav-link">通讯录</router-link>
         <router-link to="/messages" class="nav-link">消息</router-link>
