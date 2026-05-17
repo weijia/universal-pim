@@ -41,7 +41,8 @@ class SyncService {
       readFile: async (path) => {
         log('readFile:', path)
         try {
-          const result = await this.webdavFs.readFile(path)
+          // 指定 encoding: 'utf-8' 确保返回字符串而不是 Buffer/Uint8Array
+          const result = await this.webdavFs.readFile(path, 'utf-8')
           // 打印文件内容用于调试
           const preview = typeof result === 'string' ? result.substring(0, 200) : JSON.stringify(result).substring(0, 200)
           log('readFile success:', path, 'size:', result?.length || 'unknown', 'content:', preview)
