@@ -21,7 +21,7 @@ class SyncService {
     this.listeners = []
     this.lastError = null
     this.webdavFs = null
-    this._syncPath = '/universal-pim'
+    this._syncPath = '/app_data/universal-pim'
   }
 
   getLastError() {
@@ -223,7 +223,7 @@ class SyncService {
     const username = await db.getSetting('webdav_username', '')
     const password = await db.getSetting('webdav_password', '')
     const enabled = await db.getSetting('webdav_enabled', false)
-    const syncPath = await db.getSetting('webdav_sync_path', '/universal-pim')
+    const syncPath = await db.getSetting('webdav_sync_path', '/app_data/universal-pim')
     
     return { url, username, password, enabled, syncPath }
   }
@@ -235,7 +235,7 @@ class SyncService {
     await db.setSetting('webdav_username', config.username)
     await db.setSetting('webdav_password', config.password)
     await db.setSetting('webdav_enabled', config.enabled)
-    await db.setSetting('webdav_sync_path', config.syncPath || '/universal-pim')
+    await db.setSetting('webdav_sync_path', config.syncPath || '/app_data/universal-pim')
     this.notifyListeners()
   }
 

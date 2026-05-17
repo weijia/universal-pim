@@ -153,9 +153,9 @@
             <input 
               v-model="webdavForm.syncPath" 
               type="text" 
-              placeholder="/universal-pim"
+              placeholder="/app_data/universal-pim"
             />
-            <small style="color: var(--text-secondary);">WebDAV 上的同步目录路径（实际保存到 app_data/路径 下）</small>
+            <small style="color: var(--text-secondary);">WebDAV 上的同步目录路径</small>
           </div>
 
           <div class="form-actions">
@@ -189,14 +189,14 @@ const syncing = ref(false)
 const saving = ref(false)
 const lastSyncTime = ref(null)
 const syncError = ref(null)
-const webdavConfig = ref({ url: '', username: '', password: '', enabled: false, syncPath: '/universal-pim' })
+const webdavConfig = ref({ url: '', username: '', password: '', enabled: false, syncPath: '/app_data/universal-pim' })
 
 const webdavForm = ref({
   enabled: false,
   url: '',
   username: '',
   password: '',
-  syncPath: '/universal-pim'
+  syncPath: '/app_data/universal-pim'
 })
 
 const hasWebDAVConfig = computed(() =>
@@ -244,7 +244,7 @@ function openWebDAVModal() {
     url: webdavConfig.value.url || '',
     username: webdavConfig.value.username || '',
     password: webdavConfig.value.password || '',
-    syncPath: webdavConfig.value.syncPath || '/universal-pim'
+    syncPath: webdavConfig.value.syncPath || '/app_data/universal-pim'
   }
   showWebDAVModal.value = true
 }
