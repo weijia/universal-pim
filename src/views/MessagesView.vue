@@ -123,10 +123,15 @@
                     v-if="msg.contactId" 
                     :to="`/contact/${msg.contactId}`"
                     class="contact-link"
+                    :title="getContactDetails(msg)"
                   >
                     {{ msg.contactName || '未知联系人' }}
                   </router-link>
-                  <span v-else class="contact-link">{{ msg.contactName || '未知联系人' }}</span>
+                  <span v-else class="contact-link" :title="getContactDetails(msg)">{{ msg.contactName || '未知联系人' }}</span>
+                  <!-- 活跃联系人匹配详情 -->
+                  <span v-if="messageStore.filterActiveContacts && getMatchedContact(msg)" class="contact-match-info">
+                    ({{ getMatchedContact(msg).phone }})
+                  </span>
                 </div>
                 <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
               </div>
@@ -824,6 +829,44 @@ function getChannelClass(channel) {
   return classMap[channel] || 'channel-default'
 }
 
+// 获取匹配到的活跃联系人信息
+function getMatchedContact(msg) {
+  if (!msg.contactName) return null
+  // 通过电话号码匹配
+  return contactStore.activeContacts.find(c => {
+    if (!c.phone) return false
+    const msgAddr = msg.contactName.replace(/\D/g, '')
+    const contactPhone = c.phone.replace(/\D/g, '')
+    return msgAddr.includes(contactPhone) || contactPhone.includes(msgAddr)
+  })
+}
+
+// 获取联系人详细信息（用于 tooltip）
+function getContactDetails(msg) {
+  const parts = []
+  
+  // 基本信息
+  if (msg.contactName) {
+    parts.push(`发件人: ${msg.contactName}`)
+  }
+  
+  // 匹配到的活跃联系人详情
+  const matched = getMatchedContact(msg)
+  if (matched) {
+    parts.push(`匹配联系人: ${matched.name}`)
+    if (matched.phone) parts.push(`电话: ${matched.phone}`)
+    if (matched.email) parts.push(`邮箱: ${matched.email}`)
+    if (matched.tags?.length) parts.push(`标签: ${matched.tags.join(', ')}`)
+  }
+  
+  // 消息来源信息
+  if (msg.sourceAddress) {
+    parts.push(`来源号码: ${msg.sourceAddress}`)
+  }
+  
+  return parts.join('\n')
+}
+
 function onFilterChange() {
   // 过滤器已通过 v-model 双向绑定自动更新
   displayCount.value = PAGE_SIZE
@@ -1032,6 +1075,12 @@ async function deleteMessage(msg) {
 
 .contact-link:hover {
   text-decoration: underline;
+}
+
+.contact-match-info {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: 4px;
 }
 
 .message-time {
