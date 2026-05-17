@@ -77,6 +77,17 @@
       </button>
     </div>
 
+    <!-- 导入进度 -->
+    <div v-if="importProgress" class="import-progress">
+      <div class="import-progress-header">
+        <span>{{ importProgress.phase }}...</span>
+        <span class="import-progress-text">{{ importProgress.current }} / {{ importProgress.total }}</span>
+      </div>
+      <div class="import-progress-bar">
+        <div class="import-progress-fill" :style="{ width: (importProgress.current / importProgress.total * 100) + '%' }"></div>
+      </div>
+    </div>
+
     <!-- 导入结果提示 -->
     <div v-if="importResult" class="import-result" :class="importResult.type">
       <div class="import-result-header">
@@ -158,6 +169,7 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useMessageStore } from '../stores/messageStore'
 import { useContactStore } from '../stores/contactStore'
+import { db } from '../services/db'
 
 const messageStore = useMessageStore()
 const contactStore = useContactStore()
@@ -166,6 +178,7 @@ const contacts = computed(() => contactStore.contacts)
 
 const importResult = ref(null)
 const showSkipped = ref(false)
+const importProgress = ref(null) // { current, total, phase }
 const listRef = ref(null)
 const displayCount = ref(100)
 const PAGE_SIZE = 100
@@ -680,18 +693,18 @@ async function importSmsBackup(event) {
       return
     }
     
-    // 导入有效记录
+    // 导入有效记录（批量导入提升性能）
+    importProgress.value = { current: 0, total: validRecords.length, phase: '导入中' }
     let imported = 0
-    for (const record of validRecords) {
-      // 检查是否已存在（通过 _id 前缀判断）
+
+    // 准备所有消息文档
+    const docs = validRecords.map(record => {
       const existingId = record._id.startsWith('csv_') ? record._id : `sms_${record._id}`
       const dateNum = Number(record.date)
       const timestamp = new Date(dateNum).toISOString()
-      
-      // 判断方向：type=1 通常是接收，type=2 通常是发送
       const direction = record.type === '2' ? 'sent' : 'received'
-      
-      await messageStore.addMessage({
+
+      return {
         _id: existingId,
         contactId: '',
         contactName: record.address,
@@ -699,13 +712,21 @@ async function importSmsBackup(event) {
         direction,
         timestamp,
         content: record.body,
-        // 保留原始数据引用
         sourceAddress: record.address,
         sourceType: record.type,
         sourceRead: record.read
-      })
-      imported++
-    }
+      }
+    })
+
+    // 批量导入
+    imported = await db.bulkImportMessages(docs, (current, total) => {
+      importProgress.value = { current, total, phase: '导入中' }
+    })
+
+    importProgress.value = null
+    
+    // 刷新消息列表
+    await messageStore.init()
     
     importResult.value = {
       type: 'success',
@@ -1150,6 +1171,43 @@ async function deleteMessage(msg) {
   padding: 16px;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+/* 导入进度条 */
+.import-progress {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.import-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: #1e40af;
+  font-weight: 500;
+}
+
+.import-progress-text {
+  font-variant-numeric: tabular-nums;
+}
+
+.import-progress-bar {
+  height: 8px;
+  background: #dbeafe;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.import-progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 4px;
+  transition: width 0.3s ease;
 }
 
 /* 导入结果提示 */

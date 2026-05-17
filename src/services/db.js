@@ -83,6 +83,60 @@ class DatabaseService {
     return { ...message, _rev: result.rev }
   }
 
+  // 批量导入消息（使用 bulkDocs 提升性能）
+  async bulkImportMessages(messages, onProgress) {
+    const BATCH_SIZE = 500
+    let imported = 0
+    const total = messages.length
+
+    for (let i = 0; i < total; i += BATCH_SIZE) {
+      const batch = messages.slice(i, i + BATCH_SIZE)
+
+      // 获取已存在的文档 _rev
+      const ids = batch.map(m => m._id)
+      try {
+        const existing = await this.messagesDB.allDocs({ keys: ids, include_docs: true })
+        const revMap = {}
+        existing.rows.forEach(row => {
+          if (row.doc) {
+            revMap[row.doc._id] = row.doc._rev
+          }
+        })
+
+        // 合并 _rev 到要写入的文档
+        const docs = batch.map(m => {
+          const doc = { ...m, updatedAt: new Date().toISOString() }
+          if (revMap[m._id]) {
+            doc._rev = revMap[m._id]
+          }
+          return doc
+        })
+
+        const result = await this.messagesDB.bulkDocs(docs)
+        let batchOk = 0
+        result.forEach(r => { if (r.ok) batchOk++ })
+        imported += batchOk
+      } catch (e) {
+        console.error('[DB] Bulk import batch error:', e)
+        // 单条回退
+        for (const m of batch) {
+          try {
+            await this.saveMessage(m)
+            imported++
+          } catch (e2) {
+            console.error('[DB] Fallback import error:', e2)
+          }
+        }
+      }
+
+      if (onProgress) {
+        onProgress(imported, total)
+      }
+    }
+
+    return imported
+  }
+
   async deleteMessage(id) {
     const doc = await this.messagesDB.get(id)
     await this.messagesDB.remove(doc)
