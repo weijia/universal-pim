@@ -130,7 +130,7 @@
                   <span v-else class="contact-link" :title="getContactDetails(msg)">{{ msg.contactName || '未知联系人' }}</span>
                   <!-- 活跃联系人匹配详情 -->
                   <span v-if="messageStore.filterActiveContacts && getMatchedContact(msg)" class="contact-match-info">
-                    ({{ getMatchedContact(msg).phone }})
+                    → {{ getMatchedContact(msg).name }} ({{ getMatchedContact(msg).phone }})
                   </span>
                 </div>
                 <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
