@@ -199,8 +199,8 @@ const webdavForm = ref({
   syncPath: '/universal-pim'
 })
 
-const hasWebDAVConfig = computed(() => 
-  webdavConfig.value.url && webdavConfig.value.username
+const hasWebDAVConfig = computed(() =>
+  webdavConfig.value.url && webdavConfig.value.url.trim() !== ''
 )
 
 const syncStatus = computed(() => {
