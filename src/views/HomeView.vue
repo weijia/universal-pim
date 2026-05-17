@@ -51,7 +51,34 @@
           {{ contactStore.gridMode ? '☰ 列表' : '⊞ 网格' }}
         </button>
       </div>
-      <button class="btn btn-primary" @click="showAddModal = true">+ 新建联系人</button>
+      <label class="btn btn-secondary import-btn" title="导入联系人 JSON/CSV/vCard">
+        📥 导入
+        <input type="file" accept=".json,.csv,.vcf" @change="importContacts" style="display: none;" />
+      </label>
+      <button class="btn btn-primary" @click="showAddModal = true">+ 新建</button>
+    </div>
+
+    <!-- 导入结果提示 -->
+    <div v-if="importResult" class="import-result" :class="importResult.type">
+      <div class="import-result-header">
+        <span>{{ importResult.type === 'success' ? '✅' : '⚠️' }}</span>
+        <span>{{ importResult.message }}</span>
+        <button class="btn-icon" @click="importResult = null">&times;</button>
+      </div>
+      <div v-if="importResult.skipped?.length" class="skipped-details">
+        <button class="btn btn-secondary btn-sm" @click="showSkipped = !showSkipped">
+          {{ showSkipped ? '收起' : '查看' }}跳过详情 ({{ importResult.skipped.length }}条)
+        </button>
+        <div v-if="showSkipped" class="skipped-list">
+          <div v-for="(item, idx) in importResult.skipped.slice(0, 10)" :key="idx" class="skipped-item">
+            <span class="skipped-id">#{{ item.index + 1 }}</span>
+            <span class="skipped-reason">{{ item.reason }}</span>
+          </div>
+          <div v-if="importResult.skipped.length > 10" class="skipped-more">
+            ...还有 {{ importResult.skipped.length - 10 }} 条
+          </div>
+        </div>
+      </div>
     </div>
 
     <div v-if="contactStore.loading" class="empty-state">
@@ -163,6 +190,8 @@ const tagsInput = ref('')
 const listRef = ref(null)
 const displayCount = ref(50)
 const PAGE_SIZE = 50
+const importResult = ref(null)
+const showSkipped = ref(false)
 
 const formData = ref({
   name: '',
@@ -170,6 +199,224 @@ const formData = ref({
   email: '',
   notes: ''
 })
+
+// 小米通讯录 JSON 的必需字段
+const CONTACT_REQUIRED_FIELDS = ['_id', 'display_name']
+// 允许的已知字段
+const CONTACT_KNOWN_FIELDS = [
+  '_id', 'display_name', 'display_name_alt', 'sort_key', 'sort_key_alt',
+  'starred', 'times_contacted', 'last_time_contacted', 'account_type',
+  'account_name', 'has_phone_number', 'in_visible_group', 'in_default_directory',
+  'is_user_profile', 'phonebook_label', 'phonebook_label_alt', 'phonebook_bucket',
+  'phonebook_bucket_alt', 'contact_last_updated_timestamp', 'lookup',
+  'contact_account_type', 'name_raw_contact_id', 'send_to_voicemail',
+  'pinned', 'raw_contacts'
+]
+
+// 从 raw_contacts 中提取联系方式
+function extractContactInfo(rawContact) {
+  const info = {
+    name: '',
+    phone: '',
+    email: '',
+    notes: ''
+  }
+  
+  // 获取姓名
+  info.name = rawContact.display_name || rawContact.display_name_alt || ''
+  
+  // 从 contacts_data 中提取电话和邮箱
+  if (rawContact.contacts_data && Array.isArray(rawContact.contacts_data)) {
+    for (const data of rawContact.contacts_data) {
+      if (!data.mimetype) continue
+      
+      switch (data.mimetype) {
+        case 'vnd.android.cursor.item/name':
+          // 姓名，已处理
+          break
+        case 'vnd.android.cursor.item/phone_v2':
+          // 电话
+          if (data.data1 && !info.phone) {
+            info.phone = data.data1
+          }
+          break
+        case 'vnd.android.cursor.item/email_v2':
+          // 邮箱
+          if (data.data1 && !info.email) {
+            info.email = data.data1
+          }
+          break
+        case 'vnd.android.cursor.item/note':
+          // 备注
+          if (data.data1) {
+            info.notes = data.data1
+          }
+          break
+      }
+    }
+  }
+  
+  return info
+}
+
+// 校验单条联系人记录
+function validateContactRecord(record, index) {
+  // 必须是对象
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) {
+    return { valid: false, reason: `第 ${index + 1} 条记录不是有效的 JSON 对象` }
+  }
+  
+  // 检查必需字段
+  for (const field of CONTACT_REQUIRED_FIELDS) {
+    if (!(field in record)) {
+      return { valid: false, reason: `第 ${index + 1} 条: 缺少必需字段 "${field}"` }
+    }
+  }
+  
+  // 检查未知字段（只警告，不阻止）
+  const recordKeys = Object.keys(record)
+  const unknownFields = recordKeys.filter(k => !CONTACT_KNOWN_FIELDS.includes(k))
+  
+  // 检查 display_name 不为空
+  if (!record.display_name || typeof record.display_name !== 'string' || record.display_name.trim() === '') {
+    return { valid: false, reason: `第 ${index + 1} 条: display_name 为空` }
+  }
+  
+  return { valid: true, unknownFields }
+}
+
+// 导入联系人
+async function importContacts(event) {
+  const file = event.target.files[0]
+  if (!file) return
+  
+  importResult.value = null
+  showSkipped.value = false
+  
+  try {
+    const text = await file.text()
+    let data = []
+    
+    // 尝试解析 JSON
+    try {
+      const parsed = JSON.parse(text)
+      if (Array.isArray(parsed)) {
+        data = parsed
+      } else {
+        importResult.value = {
+          type: 'error',
+          message: 'JSON 格式不正确：需要联系人数组',
+          skipped: []
+        }
+        event.target.value = ''
+        return
+      }
+    } catch (e) {
+      importResult.value = {
+        type: 'error',
+        message: `JSON 解析失败：${e.message}`,
+        skipped: []
+      }
+      event.target.value = ''
+      return
+    }
+    
+    if (data.length === 0) {
+      importResult.value = {
+        type: 'error',
+        message: '文件中没有可导入的联系人',
+        skipped: []
+      }
+      event.target.value = ''
+      return
+    }
+    
+    // 校验所有记录
+    const skipped = []
+    const validRecords = []
+    
+    data.forEach((record, index) => {
+      const result = validateContactRecord(record, index)
+      if (result.valid) {
+        validRecords.push({ record, unknownFields: result.unknownFields })
+      } else {
+        skipped.push({ index, reason: result.reason })
+      }
+    })
+    
+    if (validRecords.length === 0) {
+      importResult.value = {
+        type: 'error',
+        message: `共 ${data.length} 条记录，全部校验失败`,
+        skipped
+      }
+      event.target.value = ''
+      return
+    }
+    
+    // 确认导入
+    const confirmMsg = skipped.length > 0
+      ? `共 ${data.length} 条记录，${validRecords.length} 条有效，${skipped.length} 条将被跳过。是否导入有效的 ${validRecords.length} 条联系人？`
+      : `共 ${data.length} 条记录，全部校验通过。是否导入？`
+    
+    if (!confirm(confirmMsg)) {
+      importResult.value = null
+      event.target.value = ''
+      return
+    }
+    
+    // 导入有效记录
+    let imported = 0
+    for (const { record } of validRecords) {
+      // 从 raw_contacts 提取信息
+      let contactInfo = {
+        name: record.display_name,
+        phone: '',
+        email: '',
+        notes: ''
+      }
+      
+      if (record.raw_contacts && Array.isArray(record.raw_contacts) && record.raw_contacts.length > 0) {
+        const rawContact = record.raw_contacts[0]
+        contactInfo = extractContactInfo(rawContact)
+        // 如果 raw_contact 中没有名字，使用顶层的 display_name
+        if (!contactInfo.name) {
+          contactInfo.name = record.display_name
+        }
+      }
+      
+      // 生成唯一 ID
+      const contactId = `imported_${record._id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      
+      await contactStore.addContact({
+        _id: contactId,
+        name: contactInfo.name,
+        phone: contactInfo.phone,
+        email: contactInfo.email,
+        notes: contactInfo.notes,
+        tags: ['导入'],
+        sourceId: record._id,
+        sourceAccount: record.account_name || ''
+      })
+      imported++
+    }
+    
+    importResult.value = {
+      type: 'success',
+      message: `成功导入 ${imported} 条联系人` + (skipped.length > 0 ? `，跳过 ${skipped.length} 条` : ''),
+      skipped
+    }
+    
+  } catch (error) {
+    importResult.value = {
+      type: 'error',
+      message: `导入失败：${error.message}`,
+      skipped: []
+    }
+  }
+  
+  event.target.value = ''
+}
 
 // 可见联系人（分页）
 const visibleContacts = computed(() => {
@@ -368,6 +615,91 @@ defineExpose({
   padding: 16px;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+/* 导入按钮 */
+.import-btn {
+  cursor: pointer;
+}
+
+/* 导入结果提示 */
+.import-result {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+.import-result.success {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+
+.import-result.error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.import-result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.import-result-header .btn-icon {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0 4px;
+}
+
+.skipped-details {
+  margin-top: 10px;
+}
+
+.skipped-list {
+  margin-top: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.skipped-item {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 8px;
+  background: rgba(0,0,0,0.04);
+  border-radius: 4px;
+}
+
+.skipped-id {
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.skipped-reason {
+  color: var(--text);
+}
+
+.skipped-more {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 @media (max-width: 480px) {
