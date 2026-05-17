@@ -345,16 +345,17 @@ function convertCSVRecord(record, index, format = 'qq') {
     const sender = record['发件人手机'] || ''
     const recipient = record['收件人手机'] || ''
 
-    // 如果发件人是"本人手机"或空，则是发送的短信
-    if (sender === '本人手机' || sender === '' || sender === record['发件人名字']) {
-      address = recipient
-      direction = 'sent'
-    } else {
+    // 如果收件人是"本人手机"，则是接收的短信
+    if (recipient === '本人手机' || recipient === '') {
       address = sender
       direction = 'received'
+    } else {
+      // 发件人是"本人手机"或空，则是发送的短信
+      address = recipient
+      direction = 'sent'
     }
 
-    if (!address) {
+    if (!address || address === '本人手机') {
       return { valid: false, reason: `第 ${index + 1} 行: 无法确定对方手机号` }
     }
   } else {
