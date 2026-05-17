@@ -5,6 +5,14 @@ import { db } from './db'
 // 获取 WebDAVFileSystem 创建函数
 const createWebDAVFileSystem = zenFsWebdav.createWebDAVFileSystem || zenFsWebdav.default?.createWebDAVFileSystem
 
+// 启用调试日志
+const DEBUG = true
+function log(...args) {
+  if (DEBUG) {
+    console.log('[Sync]', ...args)
+  }
+}
+
 class SyncService {
   constructor() {
     this.syncTimer = null
@@ -29,17 +37,109 @@ class SyncService {
     if (!this.webdavFs) return null
     
     // 适配 zen-fs-webdav 接口为 universal-sync-v2 需要的 fs.promises 格式
-    return {
-      readFile: (path) => this.webdavFs.readFile(path),
-      writeFile: (path, data) => this.webdavFs.writeFile(path, data),
-      readdir: (path) => this.webdavFs.readdir(path),
-      mkdir: (path, options) => this.webdavFs.mkdir(path, options),
-      stat: (path) => this.webdavFs.stat(path),
-      unlink: (path) => this.webdavFs.unlink(path),
-      rmdir: (path, options) => this.webdavFs.rmdir(path, options),
-      exists: (path) => this.webdavFs.exists(path),
-      copy: (src, dest) => this.webdavFs.copy(src, dest),
+    const fsPromises = {
+      readFile: async (path) => {
+        log('readFile:', path)
+        try {
+          const result = await this.webdavFs.readFile(path)
+          log('readFile success:', path, 'size:', result?.length || 'unknown')
+          return result
+        } catch (e) {
+          log('readFile error:', path, e.message)
+          throw e
+        }
+      },
+      writeFile: async (path, data) => {
+        log('writeFile:', path, 'size:', data?.length || 'unknown')
+        try {
+          const result = await this.webdavFs.writeFile(path, data)
+          log('writeFile success:', path)
+          return result
+        } catch (e) {
+          log('writeFile error:', path, e.message)
+          throw e
+        }
+      },
+      readdir: async (path) => {
+        log('readdir:', path)
+        try {
+          const result = await this.webdavFs.readdir(path)
+          log('readdir success:', path, 'count:', result?.length || 'unknown')
+          return result
+        } catch (e) {
+          log('readdir error:', path, e.message)
+          throw e
+        }
+      },
+      mkdir: async (path, options) => {
+        log('mkdir:', path, options)
+        try {
+          const result = await this.webdavFs.mkdir(path, options)
+          log('mkdir success:', path)
+          return result
+        } catch (e) {
+          log('mkdir error:', path, e.message)
+          throw e
+        }
+      },
+      stat: async (path) => {
+        log('stat:', path)
+        try {
+          const result = await this.webdavFs.stat(path)
+          log('stat success:', path)
+          return result
+        } catch (e) {
+          log('stat error:', path, e.message)
+          throw e
+        }
+      },
+      unlink: async (path) => {
+        log('unlink:', path)
+        try {
+          const result = await this.webdavFs.unlink(path)
+          log('unlink success:', path)
+          return result
+        } catch (e) {
+          log('unlink error:', path, e.message)
+          throw e
+        }
+      },
+      rmdir: async (path, options) => {
+        log('rmdir:', path, options)
+        try {
+          const result = await this.webdavFs.rmdir(path, options)
+          log('rmdir success:', path)
+          return result
+        } catch (e) {
+          log('rmdir error:', path, e.message)
+          throw e
+        }
+      },
+      exists: async (path) => {
+        log('exists:', path)
+        try {
+          const result = await this.webdavFs.exists(path)
+          log('exists result:', path, result)
+          return result
+        } catch (e) {
+          log('exists error:', path, e.message)
+          return false
+        }
+      },
+      copy: async (src, dest) => {
+        log('copy:', src, '->', dest)
+        try {
+          const result = await this.webdavFs.copy(src, dest)
+          log('copy success:', src, '->', dest)
+          return result
+        } catch (e) {
+          log('copy error:', src, '->', dest, e.message)
+          throw e
+        }
+      },
     }
+    
+    return fsPromises
   }
 
   // 初始化 WebDAV 连接
@@ -47,8 +147,8 @@ class SyncService {
     if (this.webdavFs) return true
     
     try {
-      console.log('[Sync] Initializing WebDAV connection to:', config.url)
-      console.log('[Sync] createWebDAVFileSystem type:', typeof createWebDAVFileSystem)
+      log('Initializing WebDAV connection to:', config.url)
+      log('createWebDAVFileSystem type:', typeof createWebDAVFileSystem)
       
       if (typeof createWebDAVFileSystem !== 'function') {
         throw new Error('createWebDAVFileSystem is not a function. Available exports: ' + Object.keys(zenFsWebdav).join(', '))
@@ -61,15 +161,44 @@ class SyncService {
       })
       
       // 确保同步目录存在
+      log('Creating sync directory:', this._syncPath)
       await this.webdavFs.mkdir(this._syncPath, { recursive: true })
       
-      console.log('[Sync] WebDAV connection initialized successfully')
+      // 检查并清理可能损坏的锁文件
+      await this._cleanupLockFile()
+      
+      log('WebDAV connection initialized successfully')
       return true
     } catch (error) {
       console.error('[Sync] Failed to initialize WebDAV:', error)
       this.lastError = 'WebDAV 连接失败: ' + (error.message || '未知错误')
       this.webdavFs = null
       return false
+    }
+  }
+
+  // 清理损坏的锁文件
+  async _cleanupLockFile() {
+    const lockPath = this._syncPath + '/.sync.lock'
+    try {
+      log('Checking lock file:', lockPath)
+      const exists = await this.webdavFs.exists(lockPath)
+      if (exists) {
+        log('Lock file exists, attempting to read...')
+        try {
+          const content = await this.webdavFs.readFile(lockPath)
+          log('Lock file content:', content?.substring?.(0, 100) || content)
+          // 尝试解析 JSON
+          JSON.parse(content)
+          log('Lock file is valid JSON')
+        } catch (e) {
+          log('Lock file is corrupted or not JSON, deleting...')
+          await this.webdavFs.unlink(lockPath)
+          log('Lock file deleted')
+        }
+      }
+    } catch (e) {
+      log('Error checking lock file:', e.message)
     }
   }
 
@@ -140,24 +269,24 @@ class SyncService {
     this.clearError()
     
     if (this.isSyncing) {
-      console.log('[Sync] Already syncing, skipping...')
+      log('Already syncing, skipping...')
       return false
     }
     
     const config = await this.getWebDAVConfig()
     if (!config.enabled) {
-      console.log('[Sync] WebDAV sync not enabled')
+      log('WebDAV sync not enabled')
       return false
     }
     
     if (!config.url) {
-      console.log('[Sync] WebDAV URL not configured')
+      log('WebDAV URL not configured')
       this.lastError = 'WebDAV URL 未配置'
       this.notifyListeners()
       return false
     }
 
-    console.log('[Sync] Starting sync with universal-sync-v2...')
+    log('Starting sync with universal-sync-v2...')
     this.isSyncing = true
     this.notifyListeners()
 
@@ -184,21 +313,31 @@ class SyncService {
         if (!instance) continue
         
         const dbPath = this._syncPath + '/' + name
-        console.log(`[Sync] Syncing ${name} to ${dbPath}...`)
+        log('Syncing', name, 'to', dbPath)
         
         try {
           await sync(instance, fsPromises, dbPath)
-          console.log(`[Sync] ${name} synced successfully`)
+          log(name, 'synced successfully')
         } catch (error) {
-          console.error(`[Sync] Failed to sync ${name}:`, error)
-          // 继续同步其他数据库
+          console.error('[Sync] Failed to sync', name, ':', error)
+          // 如果是锁文件错误，尝试清理后重试一次
+          if (error.message?.includes('lock') || error.message?.includes('sync.lock')) {
+            log('Lock error detected, attempting cleanup and retry...')
+            await this._cleanupLockFile()
+            try {
+              await sync(instance, fsPromises, dbPath)
+              log(name, 'synced successfully after retry')
+            } catch (retryError) {
+              console.error('[Sync] Retry failed:', retryError)
+            }
+          }
         }
       }
 
       this.lastSyncTime = new Date()
       this.isSyncing = false
       this.notifyListeners()
-      console.log('[Sync] All databases synced successfully!')
+      log('All databases synced successfully!')
       return true
     } catch (error) {
       console.error('[Sync] Error:', error)
@@ -219,8 +358,7 @@ class SyncService {
     }
 
     try {
-      console.log('[TestConnection] Testing connection to:', config.url)
-      console.log('[TestConnection] createWebDAVFileSystem type:', typeof createWebDAVFileSystem)
+      log('Testing connection to:', config.url)
       
       if (typeof createWebDAVFileSystem !== 'function') {
         throw new Error('createWebDAVFileSystem is not a function')
@@ -234,10 +372,11 @@ class SyncService {
 
       // 尝试创建并读取目录
       const testPath = this._syncPath
+      log('Creating test directory:', testPath)
       await this.webdavFs.mkdir(testPath, { recursive: true })
       const exists = await this.webdavFs.exists(testPath)
       
-      console.log('[TestConnection] Directory exists:', exists)
+      log('Directory exists:', exists)
 
       if (exists) {
         return { success: true, message: '连接成功！服务器响应正常。' }
