@@ -55,7 +55,7 @@
             <h3>WebDAV 配置</h3>
             <p>配置远程WebDAV服务器用于数据同步</p>
           </div>
-          <button class="btn btn-primary" @click="showWebDAVModal = true">
+          <button class="btn btn-primary" @click="openWebDAVModal">
             {{ hasWebDAVConfig ? '修改配置' : '配置' }}
           </button>
         </div>
@@ -236,6 +236,18 @@ onMounted(async () => {
   const stored = await db.getSetting('lastSyncTime')
   if (stored) lastSyncTime.value = stored
 })
+
+function openWebDAVModal() {
+  // 将已保存的配置复制到表单
+  webdavForm.value = {
+    enabled: webdavConfig.value.enabled || false,
+    url: webdavConfig.value.url || '',
+    username: webdavConfig.value.username || '',
+    password: webdavConfig.value.password || '',
+    syncPath: webdavConfig.value.syncPath || '/universal-pim'
+  }
+  showWebDAVModal.value = true
+}
 
 async function saveWebDAVConfig() {
   saving.value = true
