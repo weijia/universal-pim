@@ -155,7 +155,7 @@
               type="text" 
               placeholder="/universal-pim"
             />
-            <small style="color: var(--text-secondary);">WebDAV 上的同步目录路径</small>
+            <small style="color: var(--text-secondary);">WebDAV 上的同步目录路径（实际保存到 app_data/路径 下）</small>
           </div>
 
           <div class="form-actions">
