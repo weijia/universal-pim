@@ -237,16 +237,38 @@ const KNOWN_FIELDS = [
   'fake_cell_type', 'url_risky_type', 'favorite_date', 'sub_id'
 ]
 
-// CSV 字段映射（QQ 同步助手格式）
+// CSV 字段映射（支持多种格式）
 const CSV_FIELD_MAP = {
+  // QQ 同步助手格式
   '内容': 'body',
   '对方名字': 'name',
   '对方手机': 'address',
   '发送时间': 'date',
-  '类型': 'type'
+  '类型': 'type',
+  // 腾讯格式
+  '发件人名字': 'senderName',
+  '发件人手机': 'senderAddress',
+  '收件人': 'recipientName',
+  '收件人手机': 'recipientAddress'
 }
-// CSV 允许的字段
-const CSV_KNOWN_FIELDS = ['内容', '对方名字', '对方手机', '发送时间', '类型']
+// CSV 允许的字段（支持多种格式）
+const CSV_KNOWN_FIELDS = [
+  '内容', '对方名字', '对方手机', '发送时间', '类型',
+  '发件人名字', '发件人手机', '收件人', '收件人手机'
+]
+
+// 检测 CSV 格式类型
+function detectCSVFormat(headers) {
+  // 腾讯格式：有发件人手机、收件人手机字段
+  if (headers.includes('发件人手机') && headers.includes('收件人手机')) {
+    return 'tencent'
+  }
+  // QQ 同步助手格式：有对方手机字段
+  if (headers.includes('对方手机')) {
+    return 'qq'
+  }
+  return 'unknown'
+}
 
 // 解析 CSV 行（处理引号内的逗号）
 function parseCSVLine(line) {
@@ -305,43 +327,67 @@ function parseCSV(text) {
 }
 
 // 将 CSV 记录转换为标准短信格式
-function convertCSVRecord(record, index) {
+function convertCSVRecord(record, index, format = 'qq') {
   // 检查必需字段
   if (!record['内容'] || record['内容'].trim() === '') {
     return { valid: false, reason: `第 ${index + 1} 行: 内容为空` }
   }
-  if (!record['对方手机'] || record['对方手机'].trim() === '') {
-    return { valid: false, reason: `第 ${index + 1} 行: 对方手机为空` }
-  }
   if (!record['发送时间'] || record['发送时间'].trim() === '') {
     return { valid: false, reason: `第 ${index + 1} 行: 发送时间为空` }
   }
-  
+
+  // 根据格式确定地址和方向
+  let address = ''
+  let direction = 'received'
+
+  if (format === 'tencent') {
+    // 腾讯格式：根据发件人/收件人判断方向
+    const sender = record['发件人手机'] || ''
+    const recipient = record['收件人手机'] || ''
+
+    // 如果发件人是"本人手机"或空，则是发送的短信
+    if (sender === '本人手机' || sender === '' || sender === record['发件人名字']) {
+      address = recipient
+      direction = 'sent'
+    } else {
+      address = sender
+      direction = 'received'
+    }
+
+    if (!address) {
+      return { valid: false, reason: `第 ${index + 1} 行: 无法确定对方手机号` }
+    }
+  } else {
+    // QQ 同步助手格式
+    if (!record['对方手机'] || record['对方手机'].trim() === '') {
+      return { valid: false, reason: `第 ${index + 1} 行: 对方手机为空` }
+    }
+    address = record['对方手机']
+    direction = record['类型'] === '发件箱' ? 'sent' : 'received'
+  }
+
   // 解析时间（格式: 2016/11/01 14:23:02）
   const timeMatch = record['发送时间'].match(/(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})/)
   if (!timeMatch) {
     return { valid: false, reason: `第 ${index + 1} 行: 发送时间格式不正确，应为 "YYYY/MM/DD HH:MM:SS"` }
   }
-  
+
   const [, year, month, day, hour, minute, second] = timeMatch
   const date = new Date(year, month - 1, day, hour, minute, second)
   const timestamp = date.getTime()
-  
+
   if (isNaN(timestamp) || timestamp <= 0) {
     return { valid: false, reason: `第 ${index + 1} 行: 发送时间无效` }
   }
-  
-  // 判断方向
-  const direction = record['类型'] === '发件箱' ? 'sent' : 'received'
-  
+
   // 生成稳定的 _id（基于内容哈希，避免重复导入）
-  const contentHash = simpleHash(record['对方手机'] + record['发送时间'] + record['内容'].substring(0, 50))
+  const contentHash = simpleHash(address + record['发送时间'] + record['内容'].substring(0, 50))
 
   return {
     valid: true,
     record: {
       _id: `csv_${contentHash}`,
-      address: record['对方手机'],
+      address: address,
       date: String(timestamp),
       body: record['内容'],
       type: direction === 'sent' ? '2' : '1',
@@ -453,17 +499,23 @@ async function importSmsBackup(event) {
     
     // 检测文件类型
     const fileExt = file.name.toLowerCase().split('.').pop()
-    const isCSV = fileExt === 'csv' || text.includes('内容","对方名字","对方手机","发送时间","类型"')
-    
+    const isQQCSV = text.includes('内容","对方名字","对方手机","发送时间","类型"')
+    const isTencentCSV = text.includes('发送时间","发件人名字","发件人手机","收件人","收件人手机","内容"')
+    const isCSV = fileExt === 'csv' || isQQCSV || isTencentCSV
+
     if (isCSV) {
       // CSV 格式导入
       importType = 'CSV'
       try {
         const { headers, records } = parseCSV(text)
-        
+
+        // 检测 CSV 格式类型
+        const csvFormat = detectCSVFormat(headers)
+        console.log('[Import] Detected CSV format:', csvFormat)
+
         // 转换 CSV 记录
         for (let i = 0; i < records.length; i++) {
-          const result = convertCSVRecord(records[i], i)
+          const result = convertCSVRecord(records[i], i, csvFormat)
           if (result.valid) {
             data.push(result.record)
           } else {
