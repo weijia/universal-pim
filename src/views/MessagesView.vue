@@ -334,10 +334,13 @@ function convertCSVRecord(record, index) {
   // 判断方向
   const direction = record['类型'] === '发件箱' ? 'sent' : 'received'
   
+  // 生成稳定的 _id（基于内容哈希，避免重复导入）
+  const contentHash = simpleHash(record['对方手机'] + record['发送时间'] + record['内容'].substring(0, 50))
+
   return {
     valid: true,
     record: {
-      _id: `csv_${timestamp}_${index}`,
+      _id: `csv_${contentHash}`,
       address: record['对方手机'],
       date: String(timestamp),
       body: record['内容'],
@@ -345,6 +348,17 @@ function convertCSVRecord(record, index) {
       _source: 'csv'
     }
   }
+}
+
+// 简单字符串哈希函数
+function simpleHash(str) {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(36)
 }
 
 // 校验单条短信记录
