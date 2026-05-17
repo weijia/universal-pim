@@ -140,6 +140,18 @@ class SyncService {
           throw e
         }
       },
+      rename: async (oldPath, newPath) => {
+        log('rename:', oldPath, '->', newPath)
+        try {
+          // zen-fs-webdav 没有 rename，用 move 替代
+          const result = await this.webdavFs.move(oldPath, newPath)
+          log('rename success:', oldPath, '->', newPath)
+          return result
+        } catch (e) {
+          log('rename error:', oldPath, '->', newPath, e.message)
+          throw e
+        }
+      },
     }
     
     return fsPromises
