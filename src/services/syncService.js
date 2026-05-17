@@ -42,7 +42,9 @@ class SyncService {
         log('readFile:', path)
         try {
           const result = await this.webdavFs.readFile(path)
-          log('readFile success:', path, 'size:', result?.length || 'unknown')
+          // 打印文件内容用于调试
+          const preview = typeof result === 'string' ? result.substring(0, 200) : JSON.stringify(result).substring(0, 200)
+          log('readFile success:', path, 'size:', result?.length || 'unknown', 'content:', preview)
           return result
         } catch (e) {
           log('readFile error:', path, e.message)
