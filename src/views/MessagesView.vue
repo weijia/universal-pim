@@ -404,7 +404,35 @@ async function importSmsBackup(event) {
   showSkipped.value = false
   
   try {
-    const text = await file.text()
+    // 先尝试读取为 ArrayBuffer，自动检测编码
+    const arrayBuffer = await file.arrayBuffer()
+    let text = ''
+
+    // 尝试 UTF-8 解码
+    try {
+      const decoder = new TextDecoder('utf-8', { fatal: true })
+      text = decoder.decode(arrayBuffer)
+    } catch (e) {
+      // UTF-8 解码失败，尝试 GBK/GB2312
+      console.log('[Import] UTF-8 decode failed, trying GBK...')
+      try {
+        const decoder = new TextDecoder('gbk', { fatal: false })
+        text = decoder.decode(arrayBuffer)
+        console.log('[Import] GBK decode success')
+      } catch (e2) {
+        // 最后尝试 GB2312
+        try {
+          const decoder = new TextDecoder('gb2312', { fatal: false })
+          text = decoder.decode(arrayBuffer)
+          console.log('[Import] GB2312 decode success')
+        } catch (e3) {
+          // 全部失败，使用默认解码
+          text = new TextDecoder().decode(arrayBuffer)
+          console.log('[Import] Using default decode')
+        }
+      }
+    }
+
     let data = []
     const parseSkipped = [] // 解析阶段跳过的行
     let importType = ''
