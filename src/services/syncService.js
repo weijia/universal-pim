@@ -2,8 +2,8 @@ import { sync } from 'universal-sync-v2'
 import * as zenFsWebdav from 'zen-fs-webdav'
 import { db } from './db'
 
-// 获取 WebDAVFileSystem 类（处理不同的导出方式）
-const WebDAVFileSystem = zenFsWebdav.WebDAVFileSystem || zenFsWebdav.default?.WebDAVFileSystem || zenFsWebdav
+// 获取 WebDAVFileSystem 创建函数
+const createWebDAVFileSystem = zenFsWebdav.createWebDAVFileSystem || zenFsWebdav.default?.createWebDAVFileSystem
 
 class SyncService {
   constructor() {
@@ -48,13 +48,13 @@ class SyncService {
     
     try {
       console.log('[Sync] Initializing WebDAV connection to:', config.url)
-      console.log('[Sync] WebDAVFileSystem type:', typeof WebDAVFileSystem)
+      console.log('[Sync] createWebDAVFileSystem type:', typeof createWebDAVFileSystem)
       
-      if (typeof WebDAVFileSystem !== 'function') {
-        throw new Error('WebDAVFileSystem is not a constructor. Available exports: ' + Object.keys(zenFsWebdav).join(', '))
+      if (typeof createWebDAVFileSystem !== 'function') {
+        throw new Error('createWebDAVFileSystem is not a function. Available exports: ' + Object.keys(zenFsWebdav).join(', '))
       }
       
-      this.webdavFs = new WebDAVFileSystem({
+      this.webdavFs = createWebDAVFileSystem({
         baseUrl: config.url,
         username: config.username,
         password: config.password,
@@ -220,13 +220,13 @@ class SyncService {
 
     try {
       console.log('[TestConnection] Testing connection to:', config.url)
-      console.log('[TestConnection] WebDAVFileSystem type:', typeof WebDAVFileSystem)
+      console.log('[TestConnection] createWebDAVFileSystem type:', typeof createWebDAVFileSystem)
       
-      if (typeof WebDAVFileSystem !== 'function') {
-        throw new Error('WebDAVFileSystem is not a constructor')
+      if (typeof createWebDAVFileSystem !== 'function') {
+        throw new Error('createWebDAVFileSystem is not a function')
       }
       
-      this.webdavFs = new WebDAVFileSystem({
+      this.webdavFs = createWebDAVFileSystem({
         baseUrl: config.url,
         username: config.username,
         password: config.password,
