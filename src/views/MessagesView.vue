@@ -199,7 +199,7 @@ const activeContactIds = computed(() => {
 const activeContactPhones = computed(() => {
   return contactStore.activeContacts
     .map(c => c.phone)
-    .filter(p => p) // 过滤掉空值
+    .filter(p => p && p.replace(/\D/g, '').length >= 7) // 过滤空值和短号（少于7位）
 })
 
 // 过滤后的消息（包含活跃联系人过滤）
@@ -215,10 +215,14 @@ const filteredMessagesWithActiveFilter = computed(() => {
       // 如果没有 contactId（如导入的短信），根据电话号码匹配
       // 短信导入时 address 保存在 contactName 中
       if (m.contactName) {
+        const msgAddr = m.contactName.replace(/\D/g, '') // 只保留数字
+        // 过滤掉短号（少于7位）
+        if (msgAddr.length < 7) {
+          return false
+        }
         // 检查 contactName 是否匹配任何活跃联系人的电话号码
         // 支持部分匹配（如短信地址可能包含国家码）
         return activeContactPhones.value.some(phone => {
-          const msgAddr = m.contactName.replace(/\D/g, '') // 只保留数字
           const contactPhone = phone.replace(/\D/g, '')
           // 互相包含即可（处理带/不带国家码的情况）
           return msgAddr.includes(contactPhone) || contactPhone.includes(msgAddr)
@@ -832,11 +836,15 @@ function getChannelClass(channel) {
 // 获取匹配到的活跃联系人信息
 function getMatchedContact(msg) {
   if (!msg.contactName) return null
+  const msgAddr = msg.contactName.replace(/\D/g, '')
+  // 过滤掉短号（少于7位）
+  if (msgAddr.length < 7) return null
   // 通过电话号码匹配
   return contactStore.activeContacts.find(c => {
     if (!c.phone) return false
-    const msgAddr = msg.contactName.replace(/\D/g, '')
     const contactPhone = c.phone.replace(/\D/g, '')
+    // 联系人电话也必须是有效号码（不少于7位）
+    if (contactPhone.length < 7) return false
     return msgAddr.includes(contactPhone) || contactPhone.includes(msgAddr)
   })
 }
