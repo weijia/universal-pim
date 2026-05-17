@@ -18,13 +18,27 @@
     </div>
 
     <div class="filter-bar">
-      <select v-model="messageStore.filterContact" @change="onFilterChange">
-        <option value="">所有联系人</option>
-        <option v-for="contact in contacts" :key="contact._id" :value="contact._id">
-          {{ contact.name }}
-        </option>
-      </select>
-      
+      <div class="contact-filter">
+        <input
+          v-model="contactFilterQuery"
+          type="text"
+          placeholder="搜索联系人..."
+          @input="onContactFilterInput"
+          @focus="showContactDropdown = true"
+        />
+        <div v-if="showContactDropdown && filteredContacts.length > 0" class="contact-dropdown">
+          <div
+            v-for="contact in filteredContacts"
+            :key="contact._id"
+            class="contact-option"
+            @click="selectContact(contact._id)"
+          >
+            {{ contact.name }} {{ contact.phone ? `(${contact.phone})` : '' }}
+          </div>
+        </div>
+        <button v-if="messageStore.filterContact" class="btn-icon clear-btn" @click="clearContactFilter">&times;</button>
+      </div>
+
       <select v-model="messageStore.filterChannel" @change="onFilterChange">
         <option value="">所有渠道</option>
         <option v-for="channel in messageStore.channels" :key="channel" :value="channel">
@@ -151,13 +165,36 @@ const listRef = ref(null)
 const displayCount = ref(100)
 const PAGE_SIZE = 100
 
+// 联系人过滤
+const contactFilterQuery = ref('')
+const showContactDropdown = ref(false)
+
+// 过滤后的联系人列表
+const filteredContacts = computed(() => {
+  if (!contactFilterQuery.value.trim()) {
+    return contacts.value.slice(0, 10) // 默认显示前10个
+  }
+  const query = contactFilterQuery.value.toLowerCase()
+  return contacts.value.filter(c =>
+    c.name?.toLowerCase().includes(query) ||
+    c.phone?.includes(query) ||
+    c.email?.toLowerCase().includes(query)
+  ).slice(0, 20) // 最多显示20个
+})
+
 const hasActiveFilters = computed(() =>
   messageStore.filterContact || messageStore.filterChannel || messageStore.searchQuery || messageStore.filterActiveContacts
 )
 
-// 获取活跃联系人（未归档）的 ID 列表
+// 获取活跃联系人（未归档）的 ID 和电话号码列表
 const activeContactIds = computed(() => {
   return contactStore.activeContacts.map(c => c._id)
+})
+
+const activeContactPhones = computed(() => {
+  return contactStore.activeContacts
+    .map(c => c.phone)
+    .filter(p => p) // 过滤掉空值
 })
 
 // 过滤后的消息（包含活跃联系人过滤）
@@ -170,11 +207,17 @@ const filteredMessagesWithActiveFilter = computed(() => {
       if (m.contactId) {
         return activeContactIds.value.includes(m.contactId)
       }
-      // 如果没有 contactId（如导入的短信），根据 contactName 匹配
+      // 如果没有 contactId（如导入的短信），根据电话号码匹配
+      // 短信导入时 address 保存在 contactName 中
       if (m.contactName) {
-        return contactStore.activeContacts.some(c =>
-          c.name === m.contactName || c.phone === m.contactName
-        )
+        // 检查 contactName 是否匹配任何活跃联系人的电话号码
+        // 支持部分匹配（如短信地址可能包含国家码）
+        return activeContactPhones.value.some(phone => {
+          const msgAddr = m.contactName.replace(/\D/g, '') // 只保留数字
+          const contactPhone = phone.replace(/\D/g, '')
+          // 互相包含即可（处理带/不带国家码的情况）
+          return msgAddr.includes(contactPhone) || contactPhone.includes(msgAddr)
+        })
       }
       return false
     })
@@ -688,10 +731,32 @@ function getChannelClass(channel) {
 
 function onFilterChange() {
   // 过滤器已通过 v-model 双向绑定自动更新
+  displayCount.value = PAGE_SIZE
+}
+
+function onContactFilterInput() {
+  showContactDropdown.value = true
+}
+
+function selectContact(contactId) {
+  messageStore.filterContact = contactId
+  const contact = contacts.value.find(c => c._id === contactId)
+  if (contact) {
+    contactFilterQuery.value = contact.name
+  }
+  showContactDropdown.value = false
+  displayCount.value = PAGE_SIZE
+}
+
+function clearContactFilter() {
+  messageStore.filterContact = ''
+  contactFilterQuery.value = ''
+  displayCount.value = PAGE_SIZE
 }
 
 function clearFilters() {
   messageStore.clearFilters()
+  contactFilterQuery.value = ''
   displayCount.value = PAGE_SIZE
 }
 
@@ -724,6 +789,76 @@ async function deleteMessage(msg) {
 
 .import-btn {
   cursor: pointer;
+}
+
+/* 联系人过滤输入框 */
+.contact-filter {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+  max-width: 300px;
+}
+
+.contact-filter input {
+  width: 100%;
+  padding: 8px 32px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--card-bg);
+  color: var(--text);
+}
+
+.contact-filter input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.contact-filter .clear-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+}
+
+.contact-filter .clear-btn:hover {
+  color: var(--text);
+}
+
+.contact-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-top: 4px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.contact-option {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.contact-option:last-child {
+  border-bottom: none;
+}
+
+.contact-option:hover {
+  background: var(--border);
 }
 
 .message-date-group {
