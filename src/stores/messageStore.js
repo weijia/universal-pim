@@ -8,6 +8,7 @@ export const useMessageStore = defineStore('messages', () => {
   const searchQuery = ref('')
   const filterContact = ref('')
   const filterChannel = ref('')
+  const filterActiveContacts = ref(false) // 新增：只显示活跃联系人（未归档）的消息
 
   // 可用的消息渠道
   const channels = ['短信', '微信', 'WhatsApp', 'Telegram', 'Email', '其他']
@@ -112,9 +113,10 @@ export const useMessageStore = defineStore('messages', () => {
   }
 
   // 设置过滤器
-  function setFilters({ contact, channel }) {
+  function setFilters({ contact, channel, activeContacts }) {
     if (contact !== undefined) filterContact.value = contact
     if (channel !== undefined) filterChannel.value = channel
+    if (activeContacts !== undefined) filterActiveContacts.value = activeContacts
   }
 
   // 清除过滤器
@@ -122,6 +124,12 @@ export const useMessageStore = defineStore('messages', () => {
     filterContact.value = ''
     filterChannel.value = ''
     searchQuery.value = ''
+    filterActiveContacts.value = false
+  }
+
+  // 切换活跃联系人过滤
+  function toggleActiveContactsFilter() {
+    filterActiveContacts.value = !filterActiveContacts.value
   }
 
   return {
@@ -130,6 +138,7 @@ export const useMessageStore = defineStore('messages', () => {
     searchQuery,
     filterContact,
     filterChannel,
+    filterActiveContacts,
     channels,
     filteredMessages,
     groupedMessages,
@@ -140,6 +149,7 @@ export const useMessageStore = defineStore('messages', () => {
     getMessagesByContact,
     getMessagesByChannel,
     setFilters,
-    clearFilters
+    clearFilters,
+    toggleActiveContactsFilter
   }
 })

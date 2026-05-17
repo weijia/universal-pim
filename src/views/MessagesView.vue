@@ -32,12 +32,21 @@
         </option>
       </select>
 
-      <button 
-        class="btn btn-secondary" 
+      <button
+        class="btn btn-secondary"
         @click="contactStore.toggleCompactMode()"
         :title="contactStore.compactMode ? '切换为标准模式' : '切换为紧凑模式'"
       >
         {{ contactStore.compactMode ? '⊞ 标准' : '⊟ 紧凑' }}
+      </button>
+
+      <button
+        class="btn btn-secondary"
+        :class="{ active: messageStore.filterActiveContacts }"
+        @click="toggleActiveContactsFilter"
+        title="只显示来自活跃联系人（未归档）的消息"
+      >
+        {{ messageStore.filterActiveContacts ? '✓ 活跃' : '○ 活跃' }}
       </button>
 
       <label class="btn btn-secondary import-btn" title="导入短信备份 JSON/NDJSON/CSV 格式">
@@ -45,9 +54,9 @@
         <input type="file" accept=".json,.ndjson,.txt,.csv" @change="importSmsBackup" style="display: none;" />
       </label>
 
-      <button 
-        v-if="hasActiveFilters" 
-        class="btn btn-secondary" 
+      <button
+        v-if="hasActiveFilters"
+        class="btn btn-secondary"
         @click="clearFilters"
       >
         清除过滤
@@ -79,7 +88,7 @@
         加载中...
       </div>
       
-      <div v-else-if="messageStore.filteredMessages.length === 0" class="empty-state">
+      <div v-else-if="filteredMessagesWithActiveFilter.length === 0" class="empty-state">
         <div class="empty-state-icon">💬</div>
         <p>{{ hasActiveFilters ? '没有符合条件的消息' : '暂无消息记录' }}</p>
       </div>
@@ -119,9 +128,9 @@
     </div>
 
     <!-- 分页信息 -->
-    <div v-if="messageStore.filteredMessages.length > PAGE_SIZE" class="pagination-info">
-      <span v-if="!allLoaded">已显示 {{ displayedCount }} / {{ messageStore.filteredMessages.length }} 条消息</span>
-      <span v-else>共 {{ messageStore.filteredMessages.length }} 条消息，已全部显示</span>
+    <div v-if="filteredMessagesWithActiveFilter.length > PAGE_SIZE" class="pagination-info">
+      <span v-if="!allLoaded">已显示 {{ displayedCount }} / {{ filteredMessagesWithActiveFilter.length }} 条消息</span>
+      <span v-else>共 {{ filteredMessagesWithActiveFilter.length }} 条消息，已全部显示</span>
     </div>
   </div>
 </template>
@@ -142,9 +151,36 @@ const listRef = ref(null)
 const displayCount = ref(100)
 const PAGE_SIZE = 100
 
-const hasActiveFilters = computed(() => 
-  messageStore.filterContact || messageStore.filterChannel || messageStore.searchQuery
+const hasActiveFilters = computed(() =>
+  messageStore.filterContact || messageStore.filterChannel || messageStore.searchQuery || messageStore.filterActiveContacts
 )
+
+// 获取活跃联系人（未归档）的 ID 列表
+const activeContactIds = computed(() => {
+  return contactStore.activeContacts.map(c => c._id)
+})
+
+// 过滤后的消息（包含活跃联系人过滤）
+const filteredMessagesWithActiveFilter = computed(() => {
+  let messages = messageStore.filteredMessages
+  if (messageStore.filterActiveContacts) {
+    // 只显示来自活跃联系人（未归档）的消息
+    messages = messages.filter(m => {
+      // 如果消息有 contactId，检查是否在活跃联系人列表中
+      if (m.contactId) {
+        return activeContactIds.value.includes(m.contactId)
+      }
+      // 如果没有 contactId（如导入的短信），根据 contactName 匹配
+      if (m.contactName) {
+        return contactStore.activeContacts.some(c =>
+          c.name === m.contactName || c.phone === m.contactName
+        )
+      }
+      return false
+    })
+  }
+  return messages
+})
 
 // 短信备份 JSON 的必需字段
 const REQUIRED_FIELDS = ['_id', 'address', 'date', 'body']
@@ -564,7 +600,7 @@ const groupedByDate = computed(() => {
 
 // 分页：可见的消息
 const visibleMessages = computed(() => {
-  return messageStore.filteredMessages.slice(0, displayCount.value)
+  return filteredMessagesWithActiveFilter.value.slice(0, displayCount.value)
 })
 
 // 分页：按日期分组（只显示已加载的消息）
@@ -591,7 +627,7 @@ const visibleGroups = computed(() => {
 const displayedCount = computed(() => visibleMessages.value.length)
 
 const allLoaded = computed(() => {
-  return displayCount.value >= messageStore.filteredMessages.length
+  return displayCount.value >= filteredMessagesWithActiveFilter.value.length
 })
 
 // 重置分页当过滤条件变化
@@ -604,6 +640,10 @@ watch(() => messageStore.filterContact, () => {
 })
 
 watch(() => messageStore.filterChannel, () => {
+  displayCount.value = PAGE_SIZE
+})
+
+watch(() => messageStore.filterActiveContacts, () => {
   displayCount.value = PAGE_SIZE
 })
 
@@ -652,6 +692,12 @@ function onFilterChange() {
 
 function clearFilters() {
   messageStore.clearFilters()
+  displayCount.value = PAGE_SIZE
+}
+
+function toggleActiveContactsFilter() {
+  messageStore.toggleActiveContactsFilter()
+  displayCount.value = PAGE_SIZE
 }
 
 async function deleteMessage(msg) {
