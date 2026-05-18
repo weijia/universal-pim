@@ -46,6 +46,20 @@
         </option>
       </select>
 
+      <select v-model="messageStore.filterYear" @change="onFilterChange">
+        <option value="">所有年份</option>
+        <option v-for="year in availableYears" :key="year" :value="year">
+          {{ year }}
+        </option>
+      </select>
+
+      <select v-model="messageStore.filterMonth" @change="onFilterChange">
+        <option value="">所有月份</option>
+        <option v-for="month in availableMonths" :key="month.value" :value="month.value">
+          {{ month.label }}
+        </option>
+      </select>
+
       <button
         class="btn btn-secondary"
         @click="contactStore.toggleCompactMode()"
@@ -200,8 +214,36 @@ const filteredContacts = computed(() => {
   ).slice(0, 20) // 最多显示20个
 })
 
+// 获取消息中所有年份
+const availableYears = computed(() => {
+  const years = new Set()
+  messageStore.messages.forEach(m => {
+    const d = new Date(m.timestamp)
+    if (!isNaN(d.getTime())) {
+      years.add(d.getFullYear().toString())
+    }
+  })
+  return Array.from(years).sort().reverse()
+})
+
+// 获取消息中所有月份
+const availableMonths = computed(() => {
+  const months = new Set()
+  messageStore.messages.forEach(m => {
+    const d = new Date(m.timestamp)
+    if (!isNaN(d.getTime())) {
+      months.add((d.getMonth() + 1).toString().padStart(2, '0'))
+    }
+  })
+  return Array.from(months).sort().reverse().map(m => ({
+    value: m,
+    label: `${m}月`
+  }))
+})
+
 const hasActiveFilters = computed(() =>
-  messageStore.filterContact || messageStore.filterChannel || messageStore.searchQuery || messageStore.filterActiveContacts
+  messageStore.filterContact || messageStore.filterChannel || messageStore.searchQuery ||
+  messageStore.filterActiveContacts || messageStore.filterYear || messageStore.filterMonth
 )
 
 // 获取活跃联系人（未归档）的 ID 和电话号码列表

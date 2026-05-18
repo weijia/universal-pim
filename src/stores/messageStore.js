@@ -9,6 +9,8 @@ export const useMessageStore = defineStore('messages', () => {
   const filterContact = ref('')
   const filterChannel = ref('')
   const filterActiveContacts = ref(false) // 新增：只显示活跃联系人（未归档）的消息
+  const filterYear = ref('')
+  const filterMonth = ref('')
 
   // 可用的消息渠道
   const channels = ['短信', '微信', 'WhatsApp', 'Telegram', 'Email', '其他']
@@ -25,6 +27,23 @@ export const useMessageStore = defineStore('messages', () => {
     // 按渠道过滤
     if (filterChannel.value) {
       result = result.filter(m => m.channel === filterChannel.value)
+    }
+
+    // 按年份过滤
+    if (filterYear.value) {
+      result = result.filter(m => {
+        const d = new Date(m.timestamp)
+        return d.getFullYear().toString() === filterYear.value
+      })
+    }
+
+    // 按月份过滤
+    if (filterMonth.value) {
+      result = result.filter(m => {
+        const d = new Date(m.timestamp)
+        const month = (d.getMonth() + 1).toString().padStart(2, '0')
+        return month === filterMonth.value
+      })
     }
 
     // 搜索过滤
@@ -113,10 +132,12 @@ export const useMessageStore = defineStore('messages', () => {
   }
 
   // 设置过滤器
-  function setFilters({ contact, channel, activeContacts }) {
+  function setFilters({ contact, channel, activeContacts, year, month }) {
     if (contact !== undefined) filterContact.value = contact
     if (channel !== undefined) filterChannel.value = channel
     if (activeContacts !== undefined) filterActiveContacts.value = activeContacts
+    if (year !== undefined) filterYear.value = year
+    if (month !== undefined) filterMonth.value = month
   }
 
   // 清除过滤器
@@ -125,6 +146,8 @@ export const useMessageStore = defineStore('messages', () => {
     filterChannel.value = ''
     searchQuery.value = ''
     filterActiveContacts.value = false
+    filterYear.value = ''
+    filterMonth.value = ''
   }
 
   // 切换活跃联系人过滤
@@ -139,6 +162,8 @@ export const useMessageStore = defineStore('messages', () => {
     filterContact,
     filterChannel,
     filterActiveContacts,
+    filterYear,
+    filterMonth,
     channels,
     filteredMessages,
     groupedMessages,
