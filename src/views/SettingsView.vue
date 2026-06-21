@@ -81,6 +81,31 @@
         </div>
       </div>
 
+      <!-- Gitee 数据备份 -->
+      <div class="settings-section">
+        <h2 class="settings-title">Gitee 数据备份</h2>
+        
+        <div class="setting-item">
+          <div class="setting-info">
+            <h3>Gitee 配置</h3>
+            <p>配置 Gitee Token 以将数据提交到 Gitee 仓库</p>
+          </div>
+          <button class="btn btn-primary" @click="openGiteeModal">
+            {{ hasGiteeConfig ? '修改配置' : '配置' }}
+          </button>
+        </div>
+
+        <div v-if="hasGiteeConfig" class="setting-item">
+          <div class="setting-info">
+            <h3>提交数据到 Gitee</h3>
+            <p>将当前数据导出并提交到 Gitee 仓库</p>
+          </div>
+          <button class="btn btn-secondary" @click="pushToGitee" :disabled="giteePushing">
+            {{ giteePushing ? '提交中...' : '提交' }}
+          </button>
+        </div>
+      </div>
+
       <!-- 关于 -->
       <div class="settings-section">
         <h2 class="settings-title">关于</h2>
@@ -169,6 +194,72 @@
         </form>
       </div>
     </div>
+
+    <!-- Gitee 配置模态框 -->
+    <div v-if="showGiteeModal" class="modal-overlay" @click.self="showGiteeModal = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">Gitee 配置</h2>
+          <button class="modal-close" @click="showGiteeModal = false">&times;</button>
+        </div>
+
+        <div class="webdav-help">
+          <p>配置 Gitee 个人访问令牌以将数据提交到指定仓库。</p>
+          <p>在 Gitee <a href="https://gitee.com/profile/personal_access_tokens" target="_blank">个人设置</a> 中创建 Token。</p>
+        </div>
+        
+        <form @submit.prevent="saveGiteeConfig">
+          <div class="form-group">
+            <label>Gitee Token</label>
+            <input 
+              v-model="giteeForm.token" 
+              type="password" 
+              placeholder="输入您的 Gitee 个人访问令牌"
+            />
+            <small style="color: var(--text-secondary);">需要 projects 权限</small>
+          </div>
+          
+          <div class="form-group">
+            <label>仓库地址</label>
+            <input 
+              v-model="giteeForm.repo" 
+              type="text" 
+              placeholder="weijia/my-data"
+            />
+            <small style="color: var(--text-secondary);">格式：用户名/仓库名</small>
+          </div>
+          
+          <div class="form-group">
+            <label>文件路径</label>
+            <input 
+              v-model="giteeForm.filePath" 
+              type="text" 
+              placeholder="data/universal-pim.json"
+            />
+            <small style="color: var(--text-secondary);">仓库中的文件路径</small>
+          </div>
+
+          <div class="form-group">
+            <label>分支</label>
+            <input 
+              v-model="giteeForm.branch" 
+              type="text" 
+              placeholder="master"
+            />
+            <small style="color: var(--text-secondary);">默认为 master</small>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-secondary" @click="showGiteeModal = false">
+              取消
+            </button>
+            <button type="submit" class="btn btn-primary" :disabled="saving">
+              {{ saving ? '保存中...' : '保存' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -184,12 +275,16 @@ const versionInfo = {
 }
 
 const showWebDAVModal = ref(false)
+const showGiteeModal = ref(false)
 const testing = ref(false)
 const syncing = ref(false)
 const saving = ref(false)
+const giteePushing = ref(false)
 const lastSyncTime = ref(null)
 const syncError = ref(null)
 const webdavConfig = ref({ url: '', username: '', password: '', enabled: false, syncPath: '/app_data/universal-pim' })
+
+const giteeConfig = ref({ token: '', repo: '', filePath: 'data/universal-pim.json', branch: 'master' })
 
 const webdavForm = ref({
   enabled: false,
@@ -199,8 +294,20 @@ const webdavForm = ref({
   syncPath: '/app_data/universal-pim'
 })
 
+const giteeForm = ref({
+  token: '',
+  repo: '',
+  filePath: 'data/universal-pim.json',
+  branch: 'master'
+})
+
 const hasWebDAVConfig = computed(() =>
   webdavConfig.value.url && webdavConfig.value.url.trim() !== ''
+)
+
+const hasGiteeConfig = computed(() =>
+  giteeConfig.value.token && giteeConfig.value.token.trim() !== '' &&
+  giteeConfig.value.repo && giteeConfig.value.repo.trim() !== ''
 )
 
 const syncStatus = computed(() => {
@@ -219,6 +326,13 @@ const syncStatusText = computed(() => {
 
 onMounted(async () => {
   webdavConfig.value = await syncService.getWebDAVConfig()
+  
+  // 加载 Gitee 配置
+  const giteeToken = await db.getSetting('gitee_token', '')
+  const giteeRepo = await db.getSetting('gitee_repo', '')
+  const giteeFilePath = await db.getSetting('gitee_file_path', 'data/universal-pim.json')
+  const giteeBranch = await db.getSetting('gitee_branch', 'master')
+  giteeConfig.value = { token: giteeToken, repo: giteeRepo, filePath: giteeFilePath, branch: giteeBranch }
   
   // 监听同步状态变化
   syncService.addListener((status) => {
@@ -257,6 +371,98 @@ async function saveWebDAVConfig() {
     showWebDAVModal.value = false
   } finally {
     saving.value = false
+  }
+}
+
+function openGiteeModal() {
+  giteeForm.value = {
+    token: giteeConfig.value.token || '',
+    repo: giteeConfig.value.repo || '',
+    filePath: giteeConfig.value.filePath || 'data/universal-pim.json',
+    branch: giteeConfig.value.branch || 'master'
+  }
+  showGiteeModal.value = true
+}
+
+async function saveGiteeConfig() {
+  saving.value = true
+  try {
+    await db.setSetting('gitee_token', giteeForm.value.token)
+    await db.setSetting('gitee_repo', giteeForm.value.repo)
+    await db.setSetting('gitee_file_path', giteeForm.value.filePath)
+    await db.setSetting('gitee_branch', giteeForm.value.branch)
+    giteeConfig.value = { ...giteeForm.value }
+    showGiteeModal.value = false
+  } finally {
+    saving.value = false
+  }
+}
+
+async function pushToGitee() {
+  giteePushing.value = true
+  try {
+    // 导出数据
+    const data = await db.exportData()
+    const content = JSON.stringify(data, null, 2)
+    
+    // 调用 Gitee API
+    const [owner, repo] = giteeConfig.value.repo.split('/')
+    const filePath = giteeConfig.value.filePath
+    const branch = giteeConfig.value.branch || 'master'
+    
+    // 先获取文件是否存在（获取 sha）
+    let sha = null
+    try {
+      const getResponse = await fetch(
+        `https://gitee.com/api/v5/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`,
+        {
+          headers: {
+            'Authorization': `token ${giteeConfig.value.token}`
+          }
+        }
+      )
+      if (getResponse.ok) {
+        const existingFile = await getResponse.json()
+        sha = existingFile.sha
+      }
+    } catch (e) {
+      // 文件不存在，忽略
+    }
+    
+    // 创建或更新文件
+    const body = {
+      access_token: giteeConfig.value.token,
+      content: btoa(unescape(encodeURIComponent(content))), // Base64 编码
+      message: `更新 Universal-PIM 数据 - ${new Date().toLocaleString('zh-CN')}`,
+      branch: branch
+    }
+    
+    if (sha) {
+      body.sha = sha
+    }
+    
+    const method = sha ? 'PUT' : 'POST'
+    const response = await fetch(
+      `https://gitee.com/api/v5/repos/${owner}/${repo}/contents/${filePath}`,
+      {
+        method: method,
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      }
+    )
+    
+    if (response.ok) {
+      alert('数据已成功提交到 Gitee！')
+    } else {
+      const error = await response.json()
+      alert(`提交失败: ${error.message || JSON.stringify(error)}`)
+    }
+  } catch (e) {
+    alert(`提交失败: ${e.message}`)
+  } finally {
+    giteePushing.value = false
   }
 }
 
