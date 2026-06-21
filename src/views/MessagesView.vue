@@ -525,8 +525,19 @@ async function importSmsBackup(event) {
   const file = event.target.files[0]
   if (!file) return
   
+  // 检查是否已导入过该文件
+  const importedFiles = await db.getSetting('imported_files', [])
+  if (importedFiles.includes(file.name)) {
+    const confirmReimport = confirm(`文件 "${file.name}" 已经导入过。\n是否要再次导入？`)
+    if (!confirmReimport) {
+      event.target.value = '' // 清空文件选择
+      return
+    }
+  }
+  
   importResult.value = null
   showSkipped.value = false
+  importProgress.value = null
   
   try {
     // 先尝试读取为 ArrayBuffer，自动检测编码
@@ -769,6 +780,13 @@ async function importSmsBackup(event) {
     
     // 刷新消息列表
     await messageStore.init()
+    
+    // 记录已导入的文件名
+    const importedFiles = await db.getSetting('imported_files', [])
+    if (!importedFiles.includes(file.name)) {
+      importedFiles.push(file.name)
+      await db.setSetting('imported_files', importedFiles)
+    }
     
     importResult.value = {
       type: 'success',
