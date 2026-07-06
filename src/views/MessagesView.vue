@@ -70,6 +70,15 @@
 
       <button
         class="btn btn-secondary"
+        :class="{ active: conversationMode }"
+        @click="toggleConversationMode"
+        title="切换为对话模式，按天+联系人分组显示"
+      >
+        {{ conversationMode ? '💬 对话' : '📋 列表' }}
+      </button>
+
+      <button
+        class="btn btn-secondary"
         :class="{ active: messageStore.filterActiveContacts }"
         @click="toggleActiveContactsFilter"
         title="只显示来自活跃联系人（未归档）的消息"
@@ -122,7 +131,7 @@
       </div>
     </div>
 
-    <div class="message-list" :class="{ compact: contactStore.compactMode }" ref="listRef">
+    <div class="message-list" :class="{ compact: contactStore.compactMode, conversation: conversationMode }" ref="listRef">
       <div v-if="messageStore.loading" class="empty-state">
         加载中...
       </div>
@@ -133,44 +142,77 @@
       </div>
 
       <template v-else>
-        <!-- 按日期分组显示 -->
-        <div v-for="(group, date) in visibleGroups" :key="date" class="message-date-group">
-          <div class="date-header">{{ date }}</div>
-          
-          <div class="message-group-list" :class="{ compact: contactStore.compactMode }">
-            <div v-for="msg in group" :key="msg._id" class="message-item" :class="{ compact: contactStore.compactMode }">
-              <div class="message-header">
-                <div class="message-sender">
-                  <span class="channel-badge" :class="getChannelClass(msg.channel)">
-                    {{ msg.channel }}
-                  </span>
-                  <span class="direction-badge" :class="msg.direction">
-                    {{ msg.direction === 'sent' ? '发送' : '接收' }}
-                  </span>
-                  <router-link 
-                    v-if="msg.contactId" 
-                    :to="`/contact/${msg.contactId}`"
-                    class="contact-link"
-                    :title="getContactDetails(msg)"
-                  >
-                    {{ msg.contactName || '未知联系人' }}
-                  </router-link>
-                  <span v-else class="contact-link" :title="getContactDetails(msg)">{{ msg.contactName || '未知联系人' }}</span>
-                  <!-- 活跃联系人匹配详情 -->
-                  <span v-if="messageStore.filterActiveContacts && getMatchedContact(msg)" class="contact-match-info">
-                    → {{ getMatchedContact(msg).name }} ({{ getMatchedContact(msg).phone }})
-                  </span>
+        <!-- 对话模式：按天+联系人分组 -->
+        <template v-if="conversationMode">
+          <div v-for="group in conversationGroups" :key="group.date + '-' + (group.contactId || group.contactName)" class="conversation-group">
+            <div class="conversation-header">
+              <router-link 
+                v-if="group.contactId" 
+                :to="`/contact/${group.contactId}`"
+                class="conversation-contact-link"
+              >
+                {{ group.contactName }}
+              </router-link>
+              <span v-else class="conversation-contact-name">{{ group.contactName }}</span>
+              <span class="conversation-date">{{ group.dateLabel }}</span>
+            </div>
+            
+            <div class="conversation-messages">
+              <div 
+                v-for="msg in group.messages" 
+                :key="msg._id" 
+                class="conversation-message"
+                :class="msg.direction"
+              >
+                <div class="bubble" :class="msg.direction">
+                  <div class="bubble-content">{{ msg.content }}</div>
+                  <div class="bubble-time">{{ formatTime(msg.timestamp) }}</div>
                 </div>
-                <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
-              </div>
-              <div v-if="!contactStore.compactMode" class="message-content">{{ msg.content }}</div>
-              <div v-else class="message-content-compact">{{ msg.content }}</div>
-              <div v-if="!contactStore.compactMode" class="message-actions">
-                <button class="btn-icon" @click="deleteMessage(msg)" title="删除">🗑️</button>
               </div>
             </div>
           </div>
-        </div>
+        </template>
+        
+        <!-- 列表模式：按日期分组显示 -->
+        <template v-else>
+          <div v-for="(group, date) in visibleGroups" :key="date" class="message-date-group">
+            <div class="date-header">{{ date }}</div>
+            
+            <div class="message-group-list" :class="{ compact: contactStore.compactMode }">
+              <div v-for="msg in group" :key="msg._id" class="message-item" :class="{ compact: contactStore.compactMode }">
+                <div class="message-header">
+                  <div class="message-sender">
+                    <span class="channel-badge" :class="getChannelClass(msg.channel)">
+                      {{ msg.channel }}
+                    </span>
+                    <span class="direction-badge" :class="msg.direction">
+                      {{ msg.direction === 'sent' ? '发送' : '接收' }}
+                    </span>
+                    <router-link 
+                      v-if="msg.contactId" 
+                      :to="`/contact/${msg.contactId}`"
+                      class="contact-link"
+                      :title="getContactDetails(msg)"
+                    >
+                      {{ msg.contactName || '未知联系人' }}
+                    </router-link>
+                    <span v-else class="contact-link" :title="getContactDetails(msg)">{{ msg.contactName || '未知联系人' }}</span>
+                    <!-- 活跃联系人匹配详情 -->
+                    <span v-if="messageStore.filterActiveContacts && getMatchedContact(msg)" class="contact-match-info">
+                      → {{ getMatchedContact(msg).name }} ({{ getMatchedContact(msg).phone }})
+                    </span>
+                  </div>
+                  <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
+                </div>
+                <div v-if="!contactStore.compactMode" class="message-content">{{ msg.content }}</div>
+                <div v-else class="message-content-compact">{{ msg.content }}</div>
+                <div v-if="!contactStore.compactMode" class="message-actions">
+                  <button class="btn-icon" @click="deleteMessage(msg)" title="删除">🗑️</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
       </template>
     </div>
 
@@ -248,6 +290,51 @@ const hasActiveFilters = computed(() =>
   messageStore.filterContact || messageStore.filterChannel || messageStore.searchQuery ||
   messageStore.filterActiveContacts || messageStore.filterYear || messageStore.filterMonth
 )
+
+// 对话模式状态
+const conversationMode = ref(false)
+
+function toggleConversationMode() {
+  conversationMode.value = !conversationMode.value
+}
+
+// 按天+联系人分组的对话数据（用于对话模式）
+const conversationGroups = computed(() => {
+  if (!conversationMode.value) return []
+
+  const messages = filteredMessagesWithActiveFilter.value
+  const groups = new Map() // key: "日期-联系人ID/名称"
+
+  messages.forEach(msg => {
+    // 获取日期（YYYY-MM-DD）
+    const date = new Date(msg.timestamp)
+    const dateStr = date.toISOString().split('T')[0]
+
+    // 获取联系人标识（优先用 contactId，其次用 contactName）
+    const contactKey = msg.contactId || msg.contactName || '未知联系人'
+    const groupKey = `${dateStr}-${contactKey}`
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        date: dateStr,
+        dateLabel: formatDate(date),
+        contactId: msg.contactId,
+        contactName: msg.contactName || '未知联系人',
+        messages: []
+      })
+    }
+
+    groups.get(groupKey).messages.push(msg)
+  })
+
+  // 按日期降序排列，每个分组内的消息按时间升序
+  return Array.from(groups.values())
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map(group => ({
+      ...group,
+      messages: group.messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+    }))
+})
 
 // 获取活跃联系人（未归档）的 ID 和电话号码列表
 const activeContactIds = computed(() => {
@@ -1378,6 +1465,15 @@ function formatTime(dateStr) {
   })
 }
 
+function formatDate(date) {
+  return date.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short'
+  })
+}
+
 function getChannelClass(channel) {
   const classMap = {
     '短信': 'channel-sms',
@@ -1646,6 +1742,110 @@ async function deleteMessage(msg) {
 .direction-badge.received {
   background: #dcfce7;
   color: #16a34a;
+}
+
+/* 对话模式样式 */
+.conversation-group {
+  margin-bottom: 24px;
+  padding: 16px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.conversation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.conversation-contact-link,
+.conversation-contact-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.conversation-contact-link {
+  text-decoration: none;
+}
+
+.conversation-contact-link:hover {
+  text-decoration: underline;
+}
+
+.conversation-date {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.conversation-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conversation-message {
+  display: flex;
+  width: 100%;
+}
+
+.conversation-message.sent {
+  justify-content: flex-end;
+}
+
+.conversation-message.received {
+  justify-content: flex-start;
+}
+
+.bubble {
+  max-width: 70%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  position: relative;
+}
+
+.bubble.sent {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.bubble.received {
+  background: white;
+  color: var(--text);
+  border: 1px solid #e2e8f0;
+  border-bottom-left-radius: 4px;
+}
+
+.bubble-content {
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.bubble-time {
+  font-size: 11px;
+  margin-top: 4px;
+  opacity: 0.7;
+}
+
+.bubble.sent .bubble-time {
+  text-align: right;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.bubble.received .bubble-time {
+  text-align: left;
+  color: var(--text-secondary);
+}
+
+/* 对话模式下的列表容器样式调整 */
+.message-list.conversation {
+  padding: 12px;
 }
 
 .contact-link {
