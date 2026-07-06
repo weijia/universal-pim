@@ -144,6 +144,9 @@
                   <span class="channel-badge" :class="getChannelClass(msg.channel)">
                     {{ msg.channel }}
                   </span>
+                  <span class="direction-badge" :class="msg.direction">
+                    {{ msg.direction === 'sent' ? '发送' : '接收' }}
+                  </span>
                   <router-link 
                     v-if="msg.contactId" 
                     :to="`/contact/${msg.contactId}`"
@@ -1571,6 +1574,23 @@ async function deleteMessage(msg) {
 .channel-telegram { background: #dbeafe; color: #2563eb; }
 .channel-email { background: #fef3c7; color: #d97706; }
 .channel-default { background: var(--border); color: var(--text); }
+
+.direction-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.direction-badge.sent {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.direction-badge.received {
+  background: #dcfce7;
+  color: #16a34a;
+}
 
 .contact-link {
   color: var(--primary);
