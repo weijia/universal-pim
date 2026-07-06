@@ -334,6 +334,78 @@ function detectCSVFormat(headers) {
   return 'unknown'
 }
 
+// 解析分隔符格式短信导出（多行格式）
+// 格式：
+// 状态：接收<<<<				时间：2011-02-01 20:14:07
+// 发件人：陌生人				号码 ：1065752581880
+// 正文：消息内容
+// ============================================================
+function parseSeparatedFormat(text) {
+  const records = []
+  // 用分隔线分割每条短信
+  const blocks = text.split(/={50,}/)
+
+  for (const block of blocks) {
+    if (!block.trim()) continue
+
+    const lines = block.trim().split(/\r?\n/)
+    if (lines.length < 3) continue
+
+    // 解析第一行：状态和时间
+    const statusLine = lines[0] || ''
+    const statusMatch = statusLine.match(/状态[：:]\s*(接收|发送)[<>>]+\s*时间[：:]\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/)
+    if (!statusMatch) continue
+
+    const direction = statusMatch[1] === '发送' ? 'sent' : 'received'
+    const datetime = statusMatch[2]
+
+    // 解析第二行：发件人/收件人和号码
+    const contactLine = lines[1] || ''
+    let contactName = ''
+    let phone = ''
+
+    if (direction === 'received') {
+      // 发件人：陌生人				号码 ：1065752581880
+      const senderMatch = contactLine.match(/发件人[：:]\s*(.+?)\s+号码[：:]\s*(.+)/)
+      if (senderMatch) {
+        contactName = senderMatch[1].trim()
+        phone = senderMatch[2].trim()
+      }
+    } else {
+      // 收件人：阿				号码 ：10086
+      const recipientMatch = contactLine.match(/收件人[：:]\s*(.+?)\s+号码[：:]\s*(.+)/)
+      if (recipientMatch) {
+        contactName = recipientMatch[1].trim()
+        phone = recipientMatch[2].trim()
+      }
+    }
+
+    // 解析第三行及之后：正文
+    const contentLine = lines.slice(2).join('\n').trim()
+    const contentMatch = contentLine.match(/正文[：:]\s*(.+)/)
+    const content = contentMatch ? contentMatch[1].trim() : contentLine
+
+    if (datetime && phone && content) {
+      records.push({
+        datetime,
+        contactName,
+        phone,
+        content,
+        direction
+      })
+    }
+  }
+
+  return records
+}
+
+// 检测是否为分隔符格式
+function isSeparatedFormat(text) {
+  // 检查是否包含分隔线 和 状态行
+  return text.includes('============') &&
+         text.match(/状态[：:]\s*(接收|发送)/)
+}
+
 // 解析小米短信导出格式（无引号，逗号分隔）
 // 格式：日期时间 , 联系人 , timestamp , 消息内容 ,
 // 第一行：,,,inbox 或 ,,,"sentbox"
@@ -625,12 +697,63 @@ async function importSmsBackup(event) {
     
     // 检测文件类型
     const fileExt = file.name.toLowerCase().split('.').pop()
+    const isSeparated = isSeparatedFormat(text)
     const isXiaomiCSV = isXiaomiCSVFormat(text)
     const isQQCSV = text.includes('内容","对方名字","对方手机","发送时间","类型"')
     const isTencentCSV = text.includes('发送时间","发件人名字","发件人手机","收件人","收件人手机","内容"')
     const isCSV = fileExt === 'csv' || isQQCSV || isTencentCSV || isXiaomiCSV
 
-    if (isXiaomiCSV) {
+    if (isSeparated) {
+      // 分隔符格式导入
+      importType = '分隔符格式'
+      console.log('[Import] Detected separated format')
+      
+      try {
+        const records = parseSeparatedFormat(text)
+        console.log('[Import] Separated format records:', records.length)
+        
+        // 转换分隔符格式记录
+        for (let i = 0; i < records.length; i++) {
+          const record = records[i]
+          // 解析日期时间：2011-02-01 20:14:07
+          const dateMatch = record.datetime.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/)
+          if (!dateMatch) {
+            parseSkipped.push({ index: i, reason: `第 ${i + 1} 条: 日期格式不正确 "${record.datetime}"` })
+            continue
+          }
+          
+          const [, year, month, day, hour, minute, second] = dateMatch
+          const date = new Date(year, month - 1, day, hour, minute, second)
+          const timestamp = date.getTime()
+          
+          if (isNaN(timestamp) || timestamp <= 0) {
+            parseSkipped.push({ index: i, reason: `第 ${i + 1} 条: 日期无效` })
+            continue
+          }
+          
+          // 生成稳定的 _id
+          const contentHash = simpleHash(record.phone + record.datetime + record.content.substring(0, 50))
+          
+          data.push({
+            _id: `sep_${contentHash}`,
+            address: record.phone,
+            date: String(timestamp),
+            body: record.content,
+            type: record.direction === 'sent' ? '2' : '1',
+            _source: 'separated',
+            _contactName: record.contactName // 保存联系人名称用于后续匹配
+          })
+        }
+      } catch (e) {
+        importResult.value = {
+          type: 'error',
+          message: `分隔符格式解析失败：${e.message}`,
+          skipped: []
+        }
+        event.target.value = ''
+        return
+      }
+    } else if (isXiaomiCSV) {
       // 小米短信导出格式导入
       importType = '小米CSV'
       console.log('[Import] Detected Xiaomi CSV format')
@@ -810,13 +933,13 @@ async function importSmsBackup(event) {
       return
     }
     
-    // 校验所有记录（CSV/小米CSV 导入的已在转换时校验，这里跳过）
+    // 校验所有记录（CSV/小米CSV/分隔符格式 导入的已在转换时校验，这里跳过）
     const skipped = [...parseSkipped]
     const validRecords = []
     
     data.forEach((record, index) => {
-      if (record._source === 'csv' || record._source === 'xiaomi_csv') {
-        // CSV/小米CSV 记录已经校验过
+      if (record._source === 'csv' || record._source === 'xiaomi_csv' || record._source === 'separated') {
+        // CSV/小米CSV/分隔符格式 记录已经校验过
         validRecords.push(record)
       } else {
         const result = validateSmsRecord(record, index)
@@ -859,13 +982,13 @@ async function importSmsBackup(event) {
 
     // 准备所有消息文档
     const docs = validRecords.map(record => {
-      const existingId = record._id.startsWith('csv_') || record._id.startsWith('xiaomi_') ? record._id : `sms_${record._id}`
+      const existingId = record._id.startsWith('csv_') || record._id.startsWith('xiaomi_') || record._id.startsWith('sep_') ? record._id : `sms_${record._id}`
       const dateNum = Number(record.date)
       const timestamp = new Date(dateNum).toISOString()
       const direction = record.type === '2' ? 'sent' : 'received'
 
       // 尝试匹配联系人
-      const addressOrName = record.address
+      const addressOrName = record._contactName || record.address
       let matchedContactId = ''
       let matchedContactName = addressOrName
 
