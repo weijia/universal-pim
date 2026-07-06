@@ -113,6 +113,7 @@
           <p><strong><a href="https://github.com/weijia/universal-pim" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">Universal PIM</a></strong></p>
           <p class="version-info">
             <span class="version-tag">{{ versionInfo.tag }}</span>
+            <span class="version-hash">{{ versionInfo.hash }}</span>
             <span class="build-time">{{ versionInfo.buildTime }}</span>
           </p>
           <p>一个通用的联系人与消息管理工具</p>
@@ -271,6 +272,7 @@ import { db } from '../services/db'
 // 版本信息 - 构建时会自动替换
 const versionInfo = {
   tag: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'v1.0.0',
+  hash: typeof __GIT_HASH__ !== 'undefined' ? __GIT_HASH__ : 'unknown',
   buildTime: typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : new Date().toLocaleString('zh-CN')
 }
 
@@ -600,7 +602,17 @@ async function importData(event) {
   color: white;
   border-radius: 20px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
+}
+
+.version-hash {
+  display: inline-block;
+  padding: 4px 8px;
+  background: #f0f0f0;
+  color: #666;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: monospace;
 }
 
 .build-time {
