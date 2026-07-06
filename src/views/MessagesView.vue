@@ -516,6 +516,8 @@ function parseSemicolonCSV(text) {
     const [messageType, toFrom, dateStr, timeStr, folder, message] = parts
     if (!message || !toFrom) continue
 
+    console.log('[Import] Semicolon CSV line', i, 'folder:', folder, 'toFrom:', toFrom)
+
     // 解析日期：2008年5月2日
     const dateMatch = dateStr.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/)
     if (!dateMatch) continue
@@ -534,8 +536,9 @@ function parseSemicolonCSV(text) {
     const date = new Date(year, month - 1, day, hour, minute, second)
     const timestamp = date.getTime()
 
-    // 判断方向：收件箱 = received，发件箱 = sent
-    const direction = folder.includes('发件箱') || folder.includes('已发送') ? 'sent' : 'received'
+    // 判断方向：发出的信息 = sent，收件箱 = received
+    const direction = folder.includes('发出') || folder.includes('发送') || folder.includes('发件箱') || folder.includes('已发送') ? 'sent' : 'received'
+    console.log('[Import] Semicolon CSV direction:', direction, 'folder:', folder)
 
     records.push({
       datetime: `${year}-${month}-${day} ${hour}:${minute}:${second}`,
