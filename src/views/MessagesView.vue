@@ -353,7 +353,9 @@ function parseSeparatedFormat(text) {
 
     // 解析第一行：状态和时间
     const statusLine = lines[0] || ''
-    const statusMatch = statusLine.match(/状态[：:]\s*(接收|发送)[<>>]+\s*时间[：:]\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/)
+    // 放宽正则：允许状态和时间中间有更多空格或制表符
+    const statusMatch = statusLine.match(/状态[：:\s]*(接收|发送)[<>\s]+\s*时间[：:\s]*(\d{4}[-\/]\d{1,2}[-\/]\d{1,2}\s+\d{1,2}:\d{2}:\d{2})/)
+    console.log('[Import] Status line:', statusLine, 'Match:', statusMatch)
     if (!statusMatch) continue
 
     const direction = statusMatch[1] === '发送' ? 'sent' : 'received'
@@ -366,14 +368,17 @@ function parseSeparatedFormat(text) {
 
     if (direction === 'received') {
       // 发件人：陌生人				号码 ：1065752581880
-      const senderMatch = contactLine.match(/发件人[：:]\s*(.+?)\s+号码[：:]\s*(.+)/)
+      // 放宽正则：允许中间有制表符或多个空格
+      const senderMatch = contactLine.match(/发件人[：:\s]*(.+?)\s+号码[：:\s]*(.+)/)
+      console.log('[Import] Contact line:', contactLine, 'Match:', senderMatch)
       if (senderMatch) {
         contactName = senderMatch[1].trim()
         phone = senderMatch[2].trim()
       }
     } else {
       // 收件人：阿				号码 ：10086
-      const recipientMatch = contactLine.match(/收件人[：:]\s*(.+?)\s+号码[：:]\s*(.+)/)
+      const recipientMatch = contactLine.match(/收件人[：:\s]*(.+?)\s+号码[：:\s]*(.+)/)
+      console.log('[Import] Contact line:', contactLine, 'Match:', recipientMatch)
       if (recipientMatch) {
         contactName = recipientMatch[1].trim()
         phone = recipientMatch[2].trim()
@@ -382,8 +387,10 @@ function parseSeparatedFormat(text) {
 
     // 解析第三行及之后：正文
     const contentLine = lines.slice(2).join('\n').trim()
-    const contentMatch = contentLine.match(/正文[：:]\s*(.+)/)
+    // 放宽正则：允许正文标签后有任意空白
+    const contentMatch = contentLine.match(/正文[：:\s]*(.+)/)
     const content = contentMatch ? contentMatch[1].trim() : contentLine
+    console.log('[Import] Content:', content)
 
     if (datetime && phone && content) {
       records.push({
@@ -401,9 +408,11 @@ function parseSeparatedFormat(text) {
 
 // 检测是否为分隔符格式
 function isSeparatedFormat(text) {
-  // 检查是否包含分隔线 和 状态行
-  return text.includes('============') &&
-         text.match(/状态[：:]\s*(接收|发送)/)
+  // 检查是否包含分隔线（至少10个等号）和 状态行
+  const hasSeparator = text.includes('========')
+  const hasStatus = text.match(/状态[：:\s]*(接收|发送)/)
+  console.log('[Import] Separated format check:', hasSeparator, hasStatus)
+  return hasSeparator && hasStatus
 }
 
 // 解析小米短信导出格式（无引号，逗号分隔）
