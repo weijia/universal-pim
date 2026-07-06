@@ -761,6 +761,9 @@ async function importSmsBackup(event) {
       }
     }
 
+    // 去除 BOM 字符（UTF-8 BOM: \uFEFF）
+    text = text.replace(/^\uFEFF/, '')
+
     let data = []
     const parseSkipped = [] // 解析阶段跳过的行
     let importType = ''
