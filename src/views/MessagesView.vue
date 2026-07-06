@@ -853,6 +853,10 @@ async function importSmsBackup(event) {
     importProgress.value = { current: 0, total: validRecords.length, phase: '导入中' }
     let imported = 0
 
+    // 加载所有联系人用于匹配
+    await contactStore.init()
+    console.log('[Import] Loaded contacts for matching:', contactStore.contacts.length)
+
     // 准备所有消息文档
     const docs = validRecords.map(record => {
       const existingId = record._id.startsWith('csv_') || record._id.startsWith('xiaomi_') ? record._id : `sms_${record._id}`
@@ -860,10 +864,39 @@ async function importSmsBackup(event) {
       const timestamp = new Date(dateNum).toISOString()
       const direction = record.type === '2' ? 'sent' : 'received'
 
+      // 尝试匹配联系人
+      const addressOrName = record.address
+      let matchedContactId = ''
+      let matchedContactName = addressOrName
+
+      // 按姓名匹配
+      const byName = contactStore.contacts.find(c => c.name === addressOrName)
+      if (byName) {
+        matchedContactId = byName._id
+        matchedContactName = byName.name
+        console.log('[Import] Matched by name:', addressOrName, '→', byName._id)
+      } else {
+        // 按电话号码匹配（去掉非数字字符）
+        const addressDigits = addressOrName.replace(/\D/g, '')
+        if (addressDigits.length >= 7) {
+          const byPhone = contactStore.contacts.find(c => {
+            const phoneDigits = (c.phone || '').replace(/\D/g, '')
+            return phoneDigits.length >= 7 && (
+              addressDigits.includes(phoneDigits) || phoneDigits.includes(addressDigits)
+            )
+          })
+          if (byPhone) {
+            matchedContactId = byPhone._id
+            matchedContactName = byPhone.name || addressOrName
+            console.log('[Import] Matched by phone:', addressOrName, '→', byPhone._id)
+          }
+        }
+      }
+
       return {
         _id: existingId,
-        contactId: '',
-        contactName: record.address,
+        contactId: matchedContactId,
+        contactName: matchedContactName,
         channel: '短信',
         direction,
         timestamp,
