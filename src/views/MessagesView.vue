@@ -334,6 +334,56 @@ function detectCSVFormat(headers) {
   return 'unknown'
 }
 
+// 解析小米短信导出格式（无引号，逗号分隔）
+// 格式：日期时间 , 联系人 , timestamp , 消息内容 ,
+// 第一行：,,,inbox 或 ,,,"sentbox"
+function parseXiaomiCSV(text) {
+  const lines = text.split(/\r?\n/).filter(line => line.trim())
+  if (lines.length === 0) return { boxType: 'inbox', records: [] }
+
+  // 第一行判断收件箱/发件箱
+  const firstLine = lines[0]
+  let boxType = 'inbox' // 默认收件箱
+  if (firstLine.includes('sentbox')) {
+    boxType = 'sentbox'
+  }
+
+  const records = []
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+
+    // 解析：日期时间 , 联系人 , timestamp , 消息内容 ,
+    // 注意每列前后可能有空格，最后一列可能是空的
+    const parts = line.split(',')
+    if (parts.length >= 4) {
+      const datetime = parts[0]?.trim() || ''
+      const contactName = parts[1]?.trim() || ''
+      const timestampStr = parts[2]?.trim() || ''
+      const content = parts.slice(3).join(',').trim() // 内容可能包含逗号，合并后面的部分
+
+      if (datetime && contactName && content) {
+        records.push({
+          datetime,
+          contactName,
+          timestamp: timestampStr,
+          content,
+          boxType
+        })
+      }
+    }
+  }
+
+  return { boxType, records }
+}
+
+// 检测是否为小米短信导出格式
+function isXiaomiCSVFormat(text) {
+  const firstLine = text.split(/\r?\n/)[0]?.trim() || ''
+  // 第一行格式：,,,inbox 或 ,,,"sentbox" 或类似
+  return firstLine.match(/^,*,.*,?(inbox|sentbox|"inbox"|"sentbox")/)
+}
+
 // 解析 CSV 行（处理引号内的逗号）
 function parseCSVLine(line) {
   const result = []
@@ -575,11 +625,64 @@ async function importSmsBackup(event) {
     
     // 检测文件类型
     const fileExt = file.name.toLowerCase().split('.').pop()
+    const isXiaomiCSV = isXiaomiCSVFormat(text)
     const isQQCSV = text.includes('内容","对方名字","对方手机","发送时间","类型"')
     const isTencentCSV = text.includes('发送时间","发件人名字","发件人手机","收件人","收件人手机","内容"')
-    const isCSV = fileExt === 'csv' || isQQCSV || isTencentCSV
+    const isCSV = fileExt === 'csv' || isQQCSV || isTencentCSV || isXiaomiCSV
 
-    if (isCSV) {
+    if (isXiaomiCSV) {
+      // 小米短信导出格式导入
+      importType = '小米CSV'
+      console.log('[Import] Detected Xiaomi CSV format')
+      
+      try {
+        const { records } = parseXiaomiCSV(text)
+        console.log('[Import] Xiaomi CSV records:', records.length)
+        
+        // 转换小米格式记录
+        for (let i = 0; i < records.length; i++) {
+          const record = records[i]
+          // 解析日期时间：2010-07-17 12:34:37
+          const dateMatch = record.datetime.match(/(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})/)
+          if (!dateMatch) {
+            parseSkipped.push({ index: i, reason: `第 ${i + 1} 行: 日期格式不正确 "${record.datetime}"` })
+            continue
+          }
+          
+          const [, year, month, day, hour, minute, second] = dateMatch
+          const date = new Date(year, month - 1, day, hour, minute, second)
+          const timestamp = date.getTime()
+          
+          if (isNaN(timestamp) || timestamp <= 0) {
+            parseSkipped.push({ index: i, reason: `第 ${i + 1} 行: 日期无效` })
+            continue
+          }
+          
+          // 判断方向：inbox = received, sentbox = sent
+          const direction = record.boxType === 'sentbox' ? 'sent' : 'received'
+          
+          // 生成稳定的 _id
+          const contentHash = simpleHash(record.contactName + record.datetime + record.content.substring(0, 50))
+          
+          data.push({
+            _id: `xiaomi_${contentHash}`,
+            address: record.contactName,
+            date: String(timestamp),
+            body: record.content,
+            type: direction === 'sent' ? '2' : '1',
+            _source: 'xiaomi_csv'
+          })
+        }
+      } catch (e) {
+        importResult.value = {
+          type: 'error',
+          message: `小米CSV 解析失败：${e.message}`,
+          skipped: []
+        }
+        event.target.value = ''
+        return
+      }
+    } else if (isCSV) {
       // CSV 格式导入
       importType = 'CSV'
       try {
@@ -707,13 +810,13 @@ async function importSmsBackup(event) {
       return
     }
     
-    // 校验所有记录（CSV 导入的已在转换时校验，这里跳过）
+    // 校验所有记录（CSV/小米CSV 导入的已在转换时校验，这里跳过）
     const skipped = [...parseSkipped]
     const validRecords = []
     
     data.forEach((record, index) => {
-      if (record._source === 'csv') {
-        // CSV 记录已经校验过
+      if (record._source === 'csv' || record._source === 'xiaomi_csv') {
+        // CSV/小米CSV 记录已经校验过
         validRecords.push(record)
       } else {
         const result = validateSmsRecord(record, index)
@@ -752,7 +855,7 @@ async function importSmsBackup(event) {
 
     // 准备所有消息文档
     const docs = validRecords.map(record => {
-      const existingId = record._id.startsWith('csv_') ? record._id : `sms_${record._id}`
+      const existingId = record._id.startsWith('csv_') || record._id.startsWith('xiaomi_') ? record._id : `sms_${record._id}`
       const dateNum = Number(record.date)
       const timestamp = new Date(dateNum).toISOString()
       const direction = record.type === '2' ? 'sent' : 'received'
