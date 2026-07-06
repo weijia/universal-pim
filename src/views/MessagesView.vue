@@ -996,32 +996,51 @@ async function importSmsBackup(event) {
       const timestamp = new Date(dateNum).toISOString()
       const direction = record.type === '2' ? 'sent' : 'received'
 
-      // 尝试匹配联系人
-      const addressOrName = record._contactName || record.address
+      // 尝试匹配联系人（优先用号码匹配）
+      const contactNameFromSource = record._contactName || ''
+      const phoneFromSource = record.address || ''
       let matchedContactId = ''
-      let matchedContactName = addressOrName
+      let matchedContactName = contactNameFromSource || phoneFromSource
 
-      // 按姓名匹配
-      const byName = contactStore.contacts.find(c => c.name === addressOrName)
-      if (byName) {
-        matchedContactId = byName._id
-        matchedContactName = byName.name
-        console.log('[Import] Matched by name:', addressOrName, '→', byName._id)
-      } else {
-        // 按电话号码匹配（去掉非数字字符）
-        const addressDigits = addressOrName.replace(/\D/g, '')
-        if (addressDigits.length >= 7) {
-          const byPhone = contactStore.contacts.find(c => {
-            const phoneDigits = (c.phone || '').replace(/\D/g, '')
-            return phoneDigits.length >= 7 && (
-              addressDigits.includes(phoneDigits) || phoneDigits.includes(addressDigits)
-            )
-          })
-          if (byPhone) {
-            matchedContactId = byPhone._id
-            matchedContactName = byPhone.name || addressOrName
-            console.log('[Import] Matched by phone:', addressOrName, '→', byPhone._id)
-          }
+      // 1. 优先用号码匹配（分隔符格式中号码在 address 字段）
+      const phoneDigits = phoneFromSource.replace(/\D/g, '')
+      if (phoneDigits.length >= 7) {
+        const byPhone = contactStore.contacts.find(c => {
+          const cPhoneDigits = (c.phone || '').replace(/\D/g, '')
+          return cPhoneDigits.length >= 7 && (
+            phoneDigits.includes(cPhoneDigits) || cPhoneDigits.includes(phoneDigits)
+          )
+        })
+        if (byPhone) {
+          matchedContactId = byPhone._id
+          matchedContactName = byPhone.name || phoneFromSource
+          console.log('[Import] Matched by phone:', phoneFromSource, '→', byPhone.name, '(' + byPhone._id + ')')
+        }
+      }
+
+      // 2. 如果号码没匹配到，用姓名匹配
+      if (!matchedContactId && contactNameFromSource && contactNameFromSource !== '陌生人') {
+        const byName = contactStore.contacts.find(c => c.name === contactNameFromSource)
+        if (byName) {
+          matchedContactId = byName._id
+          matchedContactName = byName.name
+          console.log('[Import] Matched by name:', contactNameFromSource, '→', byName._id)
+        }
+      }
+
+      // 3. 如果都没匹配到，但有号码，检查号码是否匹配联系人姓名（小米CSV格式可能号码就是姓名）
+      if (!matchedContactId && phoneDigits.length >= 7) {
+        const byPhoneAsName = contactStore.contacts.find(c => {
+          // 有些格式中号码可能作为姓名保存
+          const cPhoneDigits = (c.phone || '').replace(/\D/g, '')
+          return cPhoneDigits.length >= 7 && c.name && (
+            phoneDigits.includes(cPhoneDigits) || cPhoneDigits.includes(phoneDigits)
+          )
+        })
+        if (byPhoneAsName) {
+          matchedContactId = byPhoneAsName._id
+          matchedContactName = byPhoneAsName.name
+          console.log('[Import] Matched phone to contact:', phoneFromSource, '→', byPhoneAsName.name)
         }
       }
 
