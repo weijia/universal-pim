@@ -732,39 +732,61 @@ async function importSmsBackup(event) {
   importProgress.value = null
   
   try {
-    // 先尝试读取为 ArrayBuffer，自动检测编码
+    // 先读取为 ArrayBuffer，检测编码
     const arrayBuffer = await file.arrayBuffer()
+    const bytes = new Uint8Array(arrayBuffer)
     let text = ''
-
-    // 尝试 UTF-8 解码
-    try {
-      const decoder = new TextDecoder('utf-8', { fatal: true })
+    
+    // 检测 BOM 并选择正确的编码
+    // UTF-16 BE: FE FF
+    // UTF-16 LE: FF FE
+    // UTF-32 BE: 00 00 FE FF
+    // UTF-32 LE: FF FE 00 00
+    // UTF-8 BOM: EF BB BF
+    
+    if (bytes[0] === 0xFE && bytes[1] === 0xFF) {
+      // UTF-16 BE
+      console.log('[Import] Detected UTF-16 BE')
+      const decoder = new TextDecoder('utf-16be')
       text = decoder.decode(arrayBuffer)
-    } catch (e) {
-      // UTF-8 解码失败，尝试 GBK/GB2312
-      console.log('[Import] UTF-8 decode failed, trying GBK...')
+    } else if (bytes[0] === 0xFF && bytes[1] === 0xFE) {
+      // UTF-16 LE (也可能是 UTF-32 LE，检查后面两个字节)
+      if (bytes[2] === 0x00 && bytes[3] === 0x00) {
+        console.log('[Import] Detected UTF-32 LE')
+        const decoder = new TextDecoder('utf-32le')
+        text = decoder.decode(arrayBuffer)
+      } else {
+        console.log('[Import] Detected UTF-16 LE')
+        const decoder = new TextDecoder('utf-16le')
+        text = decoder.decode(arrayBuffer)
+      }
+    } else if (bytes[0] === 0x00 && bytes[1] === 0x00 && bytes[2] === 0xFE && bytes[3] === 0xFF) {
+      // UTF-32 BE
+      console.log('[Import] Detected UTF-32 BE')
+      const decoder = new TextDecoder('utf-32be')
+      text = decoder.decode(arrayBuffer)
+    } else if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+      // UTF-8 with BOM
+      console.log('[Import] Detected UTF-8 with BOM')
+      const decoder = new TextDecoder('utf-8')
+      text = decoder.decode(arrayBuffer)
+    } else {
+      // 无 BOM，尝试 UTF-8，失败则用 GBK
       try {
+        const decoder = new TextDecoder('utf-8', { fatal: true })
+        text = decoder.decode(arrayBuffer)
+        console.log('[Import] UTF-8 decode success (no BOM)')
+      } catch (e) {
+        console.log('[Import] UTF-8 decode failed, trying GBK...')
         const decoder = new TextDecoder('gbk', { fatal: false })
         text = decoder.decode(arrayBuffer)
         console.log('[Import] GBK decode success')
-      } catch (e2) {
-        // 最后尝试 GB2312
-        try {
-          const decoder = new TextDecoder('gb2312', { fatal: false })
-          text = decoder.decode(arrayBuffer)
-          console.log('[Import] GB2312 decode success')
-        } catch (e3) {
-          // 全部失败，使用默认解码
-          text = new TextDecoder().decode(arrayBuffer)
-          console.log('[Import] Using default decode')
-        }
       }
     }
 
-    // 去除各种 BOM 字符
-    // UTF-8 BOM: \uFEFF
-    // UTF-16/32 BOM: \uFEFF \uFFFE \u0000 等
+    // 去除各种 BOM 字符（解码后可能仍有 BOM 字符）
     text = text.replace(/^[\uFEFF\uFFFE\u0000]+/, '')
+    console.log('[Import] Text first 100 chars:', text.substring(0, 100))
 
     let data = []
     const parseSkipped = [] // 解析阶段跳过的行
