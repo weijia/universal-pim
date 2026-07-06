@@ -1597,9 +1597,22 @@ async function deleteMessage(msg) {
   margin-top: 6px;
   font-size: 13px;
   color: var(--text-secondary);
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  position: relative;
+}
+
+/* 紧凑模式下长消息显示省略提示 */
+.message-content-compact::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 30%;
+  height: 20px;
+  background: linear-gradient(to right, transparent, var(--bg-color));
 }
 
 .message-actions {

@@ -1,14 +1,18 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { execSync } from 'child_process'
 
 // 获取 Git 标签、hash 和构建时间
 const getVersionInfo = () => {
   try {
-    const { execSync } = require('child_process')
+    console.log('[Build] Getting version info...')
     const tag = execSync('git describe --tags --always 2>/dev/null || echo "v1.0.0"').toString().trim()
+    console.log('[Build] Tag:', tag)
     const hash = execSync('git rev-parse --short HEAD 2>/dev/null || echo "unknown"').toString().trim()
+    console.log('[Build] Hash:', hash)
     return { tag, hash }
-  } catch {
+  } catch (e) {
+    console.log('[Build] Error getting version:', e.message)
     return { tag: 'v1.0.0', hash: 'unknown' }
   }
 }
