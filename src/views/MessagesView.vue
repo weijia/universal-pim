@@ -493,6 +493,67 @@ function parseCSVLine(line) {
   return result
 }
 
+// 解析分号分隔格式短信导出（Nokia/其他手机格式）
+// 格式："Message type";"To/From";"Date";"Time";"Folder";"Message"
+// "SMS";"x1庄";"2008年5月2日";"10:29:57 am";"收件箱";"我在荡马路…"
+function parseSemicolonCSV(text) {
+  const lines = text.split(/\r?\n/).filter(line => line.trim())
+  if (lines.length === 0) return { records: [] }
+
+  // 跳过表头行
+  const records = []
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+
+    // 解析分号分隔的字段，每个字段用双引号包裹
+    const parts = line.split(';').map(p => p.replace(/^"|"$/g, '').trim())
+    if (parts.length < 6) continue
+
+    const [messageType, toFrom, dateStr, timeStr, folder, message] = parts
+    if (!message || !toFrom) continue
+
+    // 解析日期：2008年5月2日
+    const dateMatch = dateStr.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/)
+    if (!dateMatch) continue
+
+    const [, year, month, day] = dateMatch
+
+    // 解析时间：10:29:57 am 或 8:27:31 pm
+    const timeMatch = timeStr.match(/(\d{1,2}):(\d{2}):(\d{2})\s*(am|pm)?/)
+    if (!timeMatch) continue
+
+    let [, hour, minute, second, ampm] = timeMatch
+    hour = parseInt(hour)
+    if (ampm === 'pm' && hour < 12) hour += 12
+    if (ampm === 'am' && hour === 12) hour = 0
+
+    const date = new Date(year, month - 1, day, hour, minute, second)
+    const timestamp = date.getTime()
+
+    // 判断方向：收件箱 = received，发件箱 = sent
+    const direction = folder.includes('发件箱') || folder.includes('已发送') ? 'sent' : 'received'
+
+    records.push({
+      datetime: `${year}-${month}-${day} ${hour}:${minute}:${second}`,
+      contactName: toFrom, // 可能是姓名或号码
+      timestamp,
+      content: message,
+      direction
+    })
+  }
+
+  return { records }
+}
+
+// 检测是否为分号分隔格式
+function isSemicolonCSVFormat(text) {
+  const firstLine = text.split(/\r?\n/)[0] || ''
+  return firstLine.includes('Message type') &&
+         firstLine.includes('To/From') &&
+         firstLine.includes(';')
+}
+
 // 解析 CSV 文件
 function parseCSV(text) {
   const lines = text.split(/\r?\n/).filter(line => line.trim())
@@ -706,13 +767,54 @@ async function importSmsBackup(event) {
     
     // 检测文件类型
     const fileExt = file.name.toLowerCase().split('.').pop()
+    const isSemicolonCSV = isSemicolonCSVFormat(text)
     const isSeparated = isSeparatedFormat(text)
     const isXiaomiCSV = isXiaomiCSVFormat(text)
     const isQQCSV = text.includes('内容","对方名字","对方手机","发送时间","类型"')
     const isTencentCSV = text.includes('发送时间","发件人名字","发件人手机","收件人","收件人手机","内容"')
     const isCSV = fileExt === 'csv' || isQQCSV || isTencentCSV || isXiaomiCSV
 
-    if (isSeparated) {
+    if (isSemicolonCSV) {
+      // 分号分隔格式导入（Nokia/其他手机）
+      importType = '分号CSV'
+      console.log('[Import] Detected semicolon CSV format')
+      
+      try {
+        const { records } = parseSemicolonCSV(text)
+        console.log('[Import] Semicolon CSV records:', records.length)
+        
+        // 转换分号分隔格式记录
+        for (let i = 0; i < records.length; i++) {
+          const record = records[i]
+          
+          if (isNaN(record.timestamp) || record.timestamp <= 0) {
+            parseSkipped.push({ index: i, reason: `第 ${i + 1} 条: 日期无效` })
+            continue
+          }
+          
+          // 生成稳定的 _id
+          const contentHash = simpleHash(record.contactName + record.datetime + record.content.substring(0, 50))
+          
+          data.push({
+            _id: `scsv_${contentHash}`,
+            address: record.contactName, // 可能是姓名或号码
+            date: String(record.timestamp),
+            body: record.content,
+            type: record.direction === 'sent' ? '2' : '1',
+            _source: 'semicolon_csv',
+            _contactName: record.contactName // 保存用于匹配
+          })
+        }
+      } catch (e) {
+        importResult.value = {
+          type: 'error',
+          message: `分号CSV解析失败：${e.message}`,
+          skipped: []
+        }
+        event.target.value = ''
+        return
+      }
+    } else if (isSeparated) {
       // 分隔符格式导入
       importType = '分隔符格式'
       console.log('[Import] Detected separated format')
@@ -942,13 +1044,13 @@ async function importSmsBackup(event) {
       return
     }
     
-    // 校验所有记录（CSV/小米CSV/分隔符格式 导入的已在转换时校验，这里跳过）
+    // 校验所有记录（CSV/小米CSV/分隔符格式/分号CSV 导入的已在转换时校验，这里跳过）
     const skipped = [...parseSkipped]
     const validRecords = []
     
     data.forEach((record, index) => {
-      if (record._source === 'csv' || record._source === 'xiaomi_csv' || record._source === 'separated') {
-        // CSV/小米CSV/分隔符格式 记录已经校验过
+      if (record._source === 'csv' || record._source === 'xiaomi_csv' || record._source === 'separated' || record._source === 'semicolon_csv') {
+        // CSV/小米CSV/分隔符格式/分号CSV 记录已经校验过
         validRecords.push(record)
       } else {
         const result = validateSmsRecord(record, index)
@@ -991,7 +1093,7 @@ async function importSmsBackup(event) {
 
     // 准备所有消息文档
     const docs = validRecords.map(record => {
-      const existingId = record._id.startsWith('csv_') || record._id.startsWith('xiaomi_') || record._id.startsWith('sep_') ? record._id : `sms_${record._id}`
+      const existingId = record._id.startsWith('csv_') || record._id.startsWith('xiaomi_') || record._id.startsWith('sep_') || record._id.startsWith('scsv_') ? record._id : `sms_${record._id}`
       const dateNum = Number(record.date)
       const timestamp = new Date(dateNum).toISOString()
       const direction = record.type === '2' ? 'sent' : 'received'
