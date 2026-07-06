@@ -79,7 +79,7 @@
 
       <label class="btn btn-secondary import-btn" title="导入短信备份 JSON/NDJSON/CSV 格式">
         📥 导入短信
-        <input type="file" accept=".json,.ndjson,.txt,.csv" @change="importSmsBackup" style="display: none;" />
+        <input type="file" accept=".json,.ndjson,.txt,.csv" multiple @change="importSmsBackup" style="display: none;" />
       </label>
 
       <button
@@ -720,22 +720,94 @@ function validateSmsRecord(record, index) {
 
 // 导入短信备份
 async function importSmsBackup(event) {
-  const file = event.target.files[0]
-  if (!file) return
+  const files = Array.from(event.target.files)
+  if (files.length === 0) return
   
-  // 检查是否已导入过该文件
+  // 检查已导入过的文件
   const importedFiles = await db.getSetting('imported_files', [])
-  if (importedFiles.includes(file.name)) {
-    const confirmReimport = confirm(`文件 "${file.name}" 已经导入过。\n是否要再次导入？`)
-    if (!confirmReimport) {
-      event.target.value = '' // 清空文件选择
-      return
+  const filesToImport = []
+  const skippedFiles = []
+  
+  for (const file of files) {
+    if (importedFiles.includes(file.name)) {
+      const confirmReimport = confirm(`文件 "${file.name}" 已经导入过。\n是否要再次导入？`)
+      if (confirmReimport) {
+        filesToImport.push(file)
+      } else {
+        skippedFiles.push(file.name)
+      }
+    } else {
+      filesToImport.push(file)
     }
+  }
+  
+  if (filesToImport.length === 0) {
+    event.target.value = ''
+    if (skippedFiles.length > 0) {
+      alert(`所有 ${skippedFiles.length} 个文件都已跳过`)
+    }
+    return
   }
   
   importResult.value = null
   showSkipped.value = false
+  importProgress.value = { current: 0, total: filesToImport.length, phase: '准备导入' }
+  
+  let totalImported = 0
+  let totalSkipped = 0
+  const allSkippedRecords = []
+  const fileResults = []
+  
+  // 加载所有联系人用于匹配（一次性加载）
+  await contactStore.init()
+  console.log('[Import] Loaded contacts for matching:', contactStore.contacts.length)
+  
+  for (let fileIndex = 0; fileIndex < filesToImport.length; fileIndex++) {
+    const file = filesToImport[fileIndex]
+    importProgress.value = { current: fileIndex, total: filesToImport.length, phase: `处理 ${file.name}` }
+    
+    try {
+      const result = await importSingleFile(file)
+      totalImported += result.imported
+      totalSkipped += result.skipped.length
+      allSkippedRecords.push(...result.skipped)
+      fileResults.push({ file: file.name, imported: result.imported, type: result.type })
+      
+      // 记录已导入的文件名
+      if (!importedFiles.includes(file.name)) {
+        importedFiles.push(file.name)
+      }
+    } catch (e) {
+      console.error('[Import] File error:', file.name, e)
+      fileResults.push({ file: file.name, error: e.message })
+    }
+  }
+  
+  // 保存已导入的文件名列表
+  await db.setSetting('imported_files', importedFiles)
+  
+  // 刷新消息列表
+  await messageStore.init()
+  
   importProgress.value = null
+  
+  // 显示汇总结果
+  importResult.value = {
+    type: totalImported > 0 ? 'success' : 'error',
+    message: `导入完成：${filesToImport.length} 个文件，成功导入 ${totalImported} 条消息` + 
+             (totalSkipped > 0 ? `，跳过 ${totalSkipped} 条` : '') +
+             (skippedFiles.length > 0 ? `\n已跳过文件：${skippedFiles.join(', ')}` : ''),
+    skipped: allSkippedRecords,
+    fileResults
+  }
+  
+  event.target.value = ''
+}
+
+// 导入单个文件
+async function importSingleFile(file) {
+  importResult.value = null
+  showSkipped.value = false
   
   try {
     // 先读取为 ArrayBuffer，检测编码
@@ -1200,31 +1272,12 @@ async function importSmsBackup(event) {
 
     importProgress.value = null
     
-    // 刷新消息列表
-    await messageStore.init()
-    
-    // 记录已导入的文件名
-    const importedFiles = await db.getSetting('imported_files', [])
-    if (!importedFiles.includes(file.name)) {
-      importedFiles.push(file.name)
-      await db.setSetting('imported_files', importedFiles)
-    }
-    
-    importResult.value = {
-      type: 'success',
-      message: `成功导入 ${imported} 条${importType}短信消息` + (skipped.length > 0 ? `，跳过 ${skipped.length} 条` : ''),
-      skipped
-    }
+    // 返回结果给主函数汇总
+    return { imported, skipped, type: importType }
     
   } catch (error) {
-    importResult.value = {
-      type: 'error',
-      message: `导入失败：${error.message}`,
-      skipped: []
-    }
+    throw error
   }
-  
-  event.target.value = ''
 }
 
 // 按日期分组
