@@ -647,13 +647,50 @@ function isSemicolonCSVFormat(text) {
          firstLine.includes(';')
 }
 
-// 解析 CSV 文件
+// 解析 CSV 文件（处理引号内的换行符）
 function parseCSV(text) {
-  const lines = text.split(/\r?\n/).filter(line => line.trim())
-  if (lines.length === 0) return { headers: [], records: [] }
+  // 不能简单按换行分割，需要考虑引号内的换行
+  // 先将整个文本解析成完整的记录行（可能跨多行）
+  const rawLines = []
+  let currentLine = ''
+  let inQuotes = false
+  
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    
+    if (char === '"') {
+      // 检查是否是转义的引号（两个连续引号）
+      if (inQuotes && text[i + 1] === '"') {
+        currentLine += '"'
+        i++ // 跳过下一个引号
+      } else {
+        inQuotes = !inQuotes
+        currentLine += char
+      }
+    } else if ((char === '\r' || char === '\n') && !inQuotes) {
+      // 只有引号外的换行才是行分隔
+      if (currentLine.trim()) {
+        rawLines.push(currentLine)
+      }
+      currentLine = ''
+      // 跳过 \r\n 连续的情况
+      if (char === '\r' && text[i + 1] === '\n') {
+        i++
+      }
+    } else {
+      currentLine += char
+    }
+  }
+  
+  // 添加最后一行
+  if (currentLine.trim()) {
+    rawLines.push(currentLine)
+  }
+  
+  if (rawLines.length === 0) return { headers: [], records: [] }
   
   // 解析表头
-  const headers = parseCSVLine(lines[0]).map(h => h.replace(/^"|"$/g, ''))
+  const headers = parseCSVLine(rawLines[0]).map(h => h.replace(/^"|"$/g, ''))
   
   // 检查未知字段
   const unknownFields = headers.filter(h => !CSV_KNOWN_FIELDS.includes(h))
@@ -663,8 +700,8 @@ function parseCSV(text) {
   
   // 解析记录
   const records = []
-  for (let i = 1; i < lines.length; i++) {
-    const values = parseCSVLine(lines[i]).map(v => v.replace(/^"|"$/g, ''))
+  for (let i = 1; i < rawLines.length; i++) {
+    const values = parseCSVLine(rawLines[i]).map(v => v.replace(/^"|"$/g, '').replace(/""/g, '"')) // 处理转义引号
     const record = {}
     headers.forEach((header, index) => {
       record[header] = values[index] || ''
