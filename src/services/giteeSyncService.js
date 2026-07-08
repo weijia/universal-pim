@@ -96,11 +96,24 @@ async function getRemoteFile(config, filePath) {
     }
     
     const data = await response.json()
-    // 解码 Base64 内容
-    const content = JSON.parse(atob(data.content))
-    return { exists: true, content, sha: data.sha }
+    
+    if (!data.content) {
+      return { exists: false, content: null, sha: null }
+    }
+    
+    // 解码 Base64 内容（移除空白字符）
+    try {
+      const base64Content = data.content.replace(/\s/g, '')
+      const decoded = decodeURIComponent(escape(atob(base64Content)))
+      const content = JSON.parse(decoded)
+      return { exists: true, content, sha: data.sha }
+    } catch (e) {
+      console.log('[GiteeSync] Base64 decode failed:', e.message, 'for file:', filePath)
+      // 文件存在但内容无法解码，返回 null 让它重新创建
+      return { exists: false, content: null, sha: null }
+    }
   } catch (e) {
-    if (e.message.includes('404')) {
+    if (e.message.includes('404') || e.status === 404) {
       return { exists: false, content: null, sha: null }
     }
     throw e
