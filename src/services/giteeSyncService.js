@@ -67,6 +67,12 @@ async function upsertRemoteFile(config, filePath, content, sha = null) {
   const [owner, repo] = config.repo.split('/')
   const url = `${GITEE_API_BASE}/repos/${owner}/${repo}/contents/${filePath}`
   
+  // 确保目录存在（通过创建 .gitkeep 文件）
+  const dirPath = filePath.split('/').slice(0, -1).join('/')
+  if (dirPath) {
+    await ensureDirectoryExists(config, dirPath)
+  }
+  
   const body = {
     access_token: config.token,
     content: btoa(unescape(encodeURIComponent(JSON.stringify(content, null, 2)))),
@@ -93,6 +99,51 @@ async function upsertRemoteFile(config, filePath, content, sha = null) {
   }
   
   return await response.json()
+}
+
+/**
+ * 确保目录存在（通过创建 .gitkeep 文件）
+ */
+async function ensureDirectoryExists(config, dirPath) {
+  const [owner, repo] = config.repo.split('/')
+  
+  // 检查目录是否已存在
+  const checkUrl = `${GITEE_API_BASE}/repos/${owner}/${repo}/contents/${dirPath}?ref=${config.branch}`
+  try {
+    const checkResponse = await fetch(checkUrl, {
+      headers: {
+        'Authorization': `token ${config.token}`
+      }
+    })
+    if (checkResponse.ok) {
+      return // 目录已存在
+    }
+  } catch (e) {
+    // 继续尝试创建
+  }
+  
+  // 创建 .gitkeep 文件来创建目录
+  const gitkeepPath = `${dirPath}/.gitkeep`
+  const gitkeepUrl = `${GITEE_API_BASE}/repos/${owner}/${repo}/contents/${gitkeepPath}`
+  
+  const body = {
+    access_token: config.token,
+    content: btoa(''), // 空内容
+    message: `创建目录 ${dirPath}`,
+    branch: config.branch
+  }
+  
+  try {
+    await fetch(gitkeepUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    })
+  } catch (e) {
+    // 目录创建失败可能是因为已存在，忽略错误
+  }
 }
 
 /**
