@@ -18,6 +18,48 @@ async function getGiteeConfig(db) {
 }
 
 /**
+ * 验证 Gitee 配置（检查仓库是否存在、Token 是否有效）
+ */
+async function validateGiteeConfig(config) {
+  const [owner, repo] = config.repo.split('/')
+  
+  if (!config.token || !config.repo) {
+    throw new Error('请先配置 Gitee Token 和仓库地址')
+  }
+  
+  // 检查仓库是否存在
+  const repoUrl = `${GITEE_API_BASE}/repos/${owner}/${repo}`
+  console.log('[GiteeSync] Checking repo:', repoUrl)
+  
+  const response = await fetch(repoUrl, {
+    headers: {
+      'Authorization': `token ${config.token}`
+    }
+  })
+  
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(`仓库不存在：${config.repo}\n请确认仓库地址格式正确（用户名/仓库名）`)
+    } else if (response.status === 401 || response.status === 403) {
+      throw new Error('Token 无效或权限不足\n请确认 Token 有 projects 权限')
+    } else {
+      const errorText = await response.text()
+      throw new Error(`检查仓库失败：${response.status} ${errorText}`)
+    }
+  }
+  
+  const repoData = await response.json()
+  console.log('[GiteeSync] Repo found:', repoData.name, 'default branch:', repoData.default_branch)
+  
+  // 如果用户没有指定分支，使用默认分支
+  if (!config.branch || config.branch === 'master') {
+    config.branch = repoData.default_branch || 'master'
+  }
+  
+  return { valid: true, repoData }
+}
+
+/**
  * 保存 Gitee 配置
  */
 async function saveGiteeConfig(db, config) {
@@ -107,6 +149,8 @@ async function upsertRemoteFile(config, filePath, content, sha = null) {
 async function ensureDirectoryExists(config, dirPath) {
   const [owner, repo] = config.repo.split('/')
   
+  console.log('[GiteeSync] Checking directory:', dirPath)
+  
   // 检查目录是否已存在
   const checkUrl = `${GITEE_API_BASE}/repos/${owner}/${repo}/contents/${dirPath}?ref=${config.branch}`
   try {
@@ -116,15 +160,25 @@ async function ensureDirectoryExists(config, dirPath) {
       }
     })
     if (checkResponse.ok) {
+      console.log('[GiteeSync] Directory exists:', dirPath)
       return // 目录已存在
     }
+    console.log('[GiteeSync] Directory check response:', checkResponse.status)
   } catch (e) {
-    // 继续尝试创建
+    console.log('[GiteeSync] Directory check error:', e.message)
+  }
+  
+  // 需要先检查父目录是否存在
+  const parentDir = dirPath.split('/').slice(0, -1).join('/')
+  if (parentDir) {
+    await ensureDirectoryExists(config, parentDir)
   }
   
   // 创建 .gitkeep 文件来创建目录
   const gitkeepPath = `${dirPath}/.gitkeep`
   const gitkeepUrl = `${GITEE_API_BASE}/repos/${owner}/${repo}/contents/${gitkeepPath}`
+  
+  console.log('[GiteeSync] Creating .gitkeep:', gitkeepPath)
   
   const body = {
     access_token: config.token,
@@ -133,16 +187,27 @@ async function ensureDirectoryExists(config, dirPath) {
     branch: config.branch
   }
   
-  try {
-    await fetch(gitkeepUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    })
-  } catch (e) {
-    // 目录创建失败可能是因为已存在，忽略错误
+  const response = await fetch(gitkeepUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  })
+  
+  if (!response.ok) {
+    const errorText = await response.text()
+    console.log('[GiteeSync] Create .gitkeep failed:', response.status, errorText)
+    
+    // 如果是 404，可能是仓库不存在或权限问题
+    if (response.status === 404) {
+      throw new Error(`仓库不存在或权限不足。请检查：
+1. 仓库地址是否正确：${config.repo}
+2. Token 是否有 projects 权限
+3. Token 是否有写入权限`)
+    }
+  } else {
+    console.log('[GiteeSync] .gitkeep created:', gitkeepPath)
   }
 }
 
@@ -181,6 +246,9 @@ async function getRemoteDirectory(config, dirPath) {
  * 导出联系人到 Gitee
  */
 async function exportContacts(db, config, onProgress = null) {
+  // 先验证配置
+  await validateGiteeConfig(config)
+  
   if (onProgress) onProgress({ phase: '读取联系人', current: 0, total: 1 })
   
   const contacts = await db.getAllContacts()
@@ -434,6 +502,7 @@ async function getAvailableYears(config) {
 export const giteeSyncService = {
   getGiteeConfig,
   saveGiteeConfig,
+  validateGiteeConfig,
   exportContacts,
   exportMessages,
   exportMetadata,
