@@ -425,7 +425,9 @@ onMounted(async () => {
   webdavConfig.value = await syncService.getWebDAVConfig()
   
   // 加载 Gitee 同步配置
+  console.log('[Settings] Loading Gitee sync config...')
   const giteeSyncCfg = await giteeSyncService.getGiteeConfig(db)
+  console.log('[Settings] Gitee sync config loaded:', giteeSyncCfg)
   giteeSyncConfig.value = giteeSyncCfg
   
   // 如果已配置，获取远程数据概览
@@ -496,7 +498,9 @@ function openGiteeSyncModal() {
 async function saveGiteeSyncConfig() {
   saving.value = true
   try {
+    console.log('[Settings] Saving Gitee sync config:', giteeSyncForm.value)
     await giteeSyncService.saveGiteeConfig(db, giteeSyncForm.value)
+    console.log('[Settings] Gitee sync config saved')
     giteeSyncConfig.value = { ...giteeSyncForm.value }
     showGiteeSyncModal.value = false
     

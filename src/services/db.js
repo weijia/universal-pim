@@ -166,13 +166,16 @@ class DatabaseService {
   async getSetting(key, defaultValue = null) {
     try {
       const doc = await this.settingsDB.get(`setting_${key}`)
+      console.log(`[DB] getSetting(${key}):`, doc.value)
       return doc.value
     } catch (e) {
+      console.log(`[DB] getSetting(${key}): not found, returning default:`, defaultValue)
       return defaultValue
     }
   }
 
   async setSetting(key, value) {
+    console.log(`[DB] setSetting(${key}):`, value)
     const id = `setting_${key}`
     let doc = { _id: id }
     

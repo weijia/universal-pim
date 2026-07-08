@@ -9,12 +9,15 @@ const GITEE_API_BASE = 'https://gitee.com/api/v5'
  * 获取 Gitee 配置
  */
 async function getGiteeConfig(db) {
-  return {
-    token: await db.getSetting('gitee_sync_token', ''),
-    repo: await db.getSetting('gitee_sync_repo', ''),
-    branch: await db.getSetting('gitee_sync_branch', 'master'),
-    path: await db.getSetting('gitee_sync_path', 'data/universal-pim/')
-  }
+  console.log('[GiteeSync] Getting config from db...')
+  const token = await db.getSetting('gitee_sync_token', '')
+  const repo = await db.getSetting('gitee_sync_repo', '')
+  const branch = await db.getSetting('gitee_sync_branch', 'master')
+  const path = await db.getSetting('gitee_sync_path', 'data/universal-pim/')
+  
+  console.log('[GiteeSync] Config values:', { token, repo, branch, path })
+  
+  return { token, repo, branch, path }
 }
 
 /**
@@ -63,10 +66,12 @@ async function validateGiteeConfig(config) {
  * 保存 Gitee 配置
  */
 async function saveGiteeConfig(db, config) {
+  console.log('[GiteeSync] Saving config:', config)
   await db.setSetting('gitee_sync_token', config.token)
   await db.setSetting('gitee_sync_repo', config.repo)
   await db.setSetting('gitee_sync_branch', config.branch || 'master')
   await db.setSetting('gitee_sync_path', config.path || 'data/universal-pim/')
+  console.log('[GiteeSync] Config saved successfully')
 }
 
 /**
