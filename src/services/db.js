@@ -47,6 +47,14 @@ class DatabaseService {
     return { ...contact, _rev: result.rev }
   }
 
+  async addContact(contact) {
+    return await this.saveContact(contact)
+  }
+
+  async updateContact(contact) {
+    return await this.saveContact(contact)
+  }
+
   async deleteContact(id) {
     const doc = await this.contactsDB.get(id)
     await this.contactsDB.remove(doc)
@@ -56,6 +64,18 @@ class DatabaseService {
   async getAllMessages() {
     const result = await this.messagesDB.allDocs({ include_docs: true })
     return result.rows.map(row => row.doc)
+  }
+
+  async getMessage(id) {
+    try {
+      return await this.messagesDB.get(id)
+    } catch (e) {
+      return null
+    }
+  }
+
+  async addMessage(message) {
+    return await this.saveMessage(message)
   }
 
   async getMessagesByContact(contactId) {

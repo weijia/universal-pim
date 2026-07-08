@@ -81,28 +81,59 @@
         </div>
       </div>
 
-      <!-- Gitee 数据备份 -->
+      <!-- Gitee 同步 -->
       <div class="settings-section">
-        <h2 class="settings-title">Gitee 数据备份</h2>
+        <h2 class="settings-title">Gitee 同步</h2>
         
         <div class="setting-item">
           <div class="setting-info">
             <h3>Gitee 配置</h3>
-            <p>配置 Gitee Token 以将数据提交到 Gitee 仓库</p>
+            <p>配置 Gitee Token 以同步联系人和消息到 Gitee 仓库</p>
           </div>
-          <button class="btn btn-primary" @click="openGiteeModal">
-            {{ hasGiteeConfig ? '修改配置' : '配置' }}
+          <button class="btn btn-primary" @click="openGiteeSyncModal">
+            {{ hasGiteeSyncConfig ? '修改配置' : '配置' }}
           </button>
         </div>
 
-        <div v-if="hasGiteeConfig" class="setting-item">
+        <div v-if="hasGiteeSyncConfig && remoteOverview" class="setting-item">
           <div class="setting-info">
-            <h3>提交数据到 Gitee</h3>
-            <p>将当前数据导出并提交到 Gitee 仓库</p>
+            <h3>远程数据</h3>
+            <p>
+              联系人：{{ remoteOverview.stats?.contacts || 0 }} 条，
+              消息：{{ remoteOverview.stats?.messages || 0 }} 条
+              <br />
+              最后导出：{{ remoteOverview.lastExportTime ? new Date(remoteOverview.lastExportTime).toLocaleString('zh-CN') : '无' }}
+            </p>
           </div>
-          <button class="btn btn-secondary" @click="pushToGitee" :disabled="giteePushing">
-            {{ giteePushing ? '提交中...' : '提交' }}
+        </div>
+
+        <div v-if="hasGiteeSyncConfig" class="setting-item">
+          <div class="setting-info">
+            <h3>导出到 Gitee</h3>
+            <p>将联系人和消息导出到 Gitee 仓库（按年/月分文件）</p>
+          </div>
+          <button class="btn btn-secondary" @click="exportToGitee" :disabled="giteeSyncProgress">
+            {{ giteeSyncProgress ? giteeSyncProgress.phase : '导出' }}
           </button>
+        </div>
+
+        <div v-if="hasGiteeSyncConfig" class="setting-item">
+          <div class="setting-info">
+            <h3>从 Gitee 导入</h3>
+            <p>从 Gitee 仓库导入联系人和消息</p>
+          </div>
+          <button class="btn btn-secondary" @click="showGiteeImportModal = true" :disabled="giteeSyncProgress">
+            选择导入
+          </button>
+        </div>
+
+        <!-- 导入进度 -->
+        <div v-if="giteeSyncProgress" class="sync-progress">
+          <p>{{ giteeSyncProgress.phase }}</p>
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: `${(giteeSyncProgress.current / giteeSyncProgress.total) * 100}%` }"></div>
+          </div>
+          <p class="progress-text">{{ giteeSyncProgress.current }} / {{ giteeSyncProgress.total }}</p>
         </div>
       </div>
 
@@ -196,24 +227,24 @@
       </div>
     </div>
 
-    <!-- Gitee 配置模态框 -->
-    <div v-if="showGiteeModal" class="modal-overlay" @click.self="showGiteeModal = false">
+    <!-- Gitee 同步配置模态框 -->
+    <div v-if="showGiteeSyncModal" class="modal-overlay" @click.self="showGiteeSyncModal = false">
       <div class="modal">
         <div class="modal-header">
-          <h2 class="modal-title">Gitee 配置</h2>
-          <button class="modal-close" @click="showGiteeModal = false">&times;</button>
+          <h2 class="modal-title">Gitee 同步配置</h2>
+          <button class="modal-close" @click="showGiteeSyncModal = false">&times;</button>
         </div>
 
         <div class="webdav-help">
-          <p>配置 Gitee 个人访问令牌以将数据提交到指定仓库。</p>
+          <p>配置 Gitee 个人访问令牌以同步联系人和消息到 Gitee 仓库。</p>
           <p>在 Gitee <a href="https://gitee.com/profile/personal_access_tokens" target="_blank">个人设置</a> 中创建 Token。</p>
         </div>
         
-        <form @submit.prevent="saveGiteeConfig">
+        <form @submit.prevent="saveGiteeSyncConfig">
           <div class="form-group">
             <label>Gitee Token</label>
             <input 
-              v-model="giteeForm.token" 
+              v-model="giteeSyncForm.token" 
               type="password" 
               placeholder="输入您的 Gitee 个人访问令牌"
             />
@@ -223,7 +254,7 @@
           <div class="form-group">
             <label>仓库地址</label>
             <input 
-              v-model="giteeForm.repo" 
+              v-model="giteeSyncForm.repo" 
               type="text" 
               placeholder="weijia/my-data"
             />
@@ -231,19 +262,19 @@
           </div>
           
           <div class="form-group">
-            <label>文件路径</label>
+            <label>同步路径</label>
             <input 
-              v-model="giteeForm.filePath" 
+              v-model="giteeSyncForm.path" 
               type="text" 
-              placeholder="data/universal-pim.json"
+              placeholder="data/universal-pim/"
             />
-            <small style="color: var(--text-secondary);">仓库中的文件路径</small>
+            <small style="color: var(--text-secondary);">仓库中的目录路径（默认 data/universal-pim/）</small>
           </div>
 
           <div class="form-group">
             <label>分支</label>
             <input 
-              v-model="giteeForm.branch" 
+              v-model="giteeSyncForm.branch" 
               type="text" 
               placeholder="master"
             />
@@ -251,11 +282,60 @@
           </div>
 
           <div class="form-actions">
-            <button type="button" class="btn btn-secondary" @click="showGiteeModal = false">
+            <button type="button" class="btn btn-secondary" @click="showGiteeSyncModal = false">
               取消
             </button>
             <button type="submit" class="btn btn-primary" :disabled="saving">
               {{ saving ? '保存中...' : '保存' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Gitee 导入选择模态框 -->
+    <div v-if="showGiteeImportModal" class="modal-overlay" @click.self="showGiteeImportModal = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">从 Gitee 导入</h2>
+          <button class="modal-close" @click="showGiteeImportModal = false">&times;</button>
+        </div>
+
+        <div v-if="remoteOverview" class="import-info">
+          <p>远程数据概览：</p>
+          <ul>
+            <li>联系人：{{ remoteOverview.stats?.contacts || 0 }} 条</li>
+            <li>消息：{{ remoteOverview.stats?.messages || 0 }} 条</li>
+            <li>年份：{{ remoteOverview.stats?.years?.join(', ') || '无' }}</li>
+          </ul>
+        </div>
+
+        <form @submit.prevent="importFromGitee">
+          <div class="form-group">
+            <label>导入联系人</label>
+            <label class="toggle">
+              <input type="checkbox" v-model="giteeImportForm.importContacts" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label>选择年份（消息）</label>
+            <div class="year-checkboxes">
+              <label v-for="year in availableYears" :key="year" class="checkbox-label">
+                <input type="checkbox" v-model="giteeImportForm.selectedYears" :value="year" />
+                {{ year }}
+              </label>
+            </div>
+            <small style="color: var(--text-secondary);">勾选要导入消息的年份</small>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-secondary" @click="showGiteeImportModal = false">
+              取消
+            </button>
+            <button type="submit" class="btn btn-primary" :disabled="giteeSyncProgress">
+              {{ giteeSyncProgress ? '导入中...' : '开始导入' }}
             </button>
           </div>
         </form>
@@ -267,7 +347,10 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { syncService } from '../services/syncService'
+import { giteeSyncService } from '../services/giteeSyncService'
 import { db } from '../services/db'
+import { useContactStore } from '../stores/contactStore'
+import { useMessageStore } from '../stores/messageStore'
 
 // 版本信息 - 构建时会自动替换
 const versionInfo = {
@@ -276,17 +359,24 @@ const versionInfo = {
   buildTime: typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : new Date().toLocaleString('zh-CN')
 }
 
+const contactStore = useContactStore()
+const messageStore = useMessageStore()
+
 const showWebDAVModal = ref(false)
-const showGiteeModal = ref(false)
+const showGiteeSyncModal = ref(false)
+const showGiteeImportModal = ref(false)
 const testing = ref(false)
 const syncing = ref(false)
 const saving = ref(false)
 const giteePushing = ref(false)
+const giteeSyncProgress = ref(null)
 const lastSyncTime = ref(null)
 const syncError = ref(null)
+const remoteOverview = ref(null)
+const availableYears = ref([])
 const webdavConfig = ref({ url: '', username: '', password: '', enabled: false, syncPath: '/app_data/universal-pim' })
 
-const giteeConfig = ref({ token: '', repo: '', filePath: 'data/universal-pim.json', branch: 'master' })
+const giteeSyncConfig = ref({ token: '', repo: '', path: 'data/universal-pim/', branch: 'master' })
 
 const webdavForm = ref({
   enabled: false,
@@ -296,20 +386,25 @@ const webdavForm = ref({
   syncPath: '/app_data/universal-pim'
 })
 
-const giteeForm = ref({
+const giteeSyncForm = ref({
   token: '',
   repo: '',
-  filePath: 'data/universal-pim.json',
+  path: 'data/universal-pim/',
   branch: 'master'
+})
+
+const giteeImportForm = ref({
+  importContacts: true,
+  selectedYears: []
 })
 
 const hasWebDAVConfig = computed(() =>
   webdavConfig.value.url && webdavConfig.value.url.trim() !== ''
 )
 
-const hasGiteeConfig = computed(() =>
-  giteeConfig.value.token && giteeConfig.value.token.trim() !== '' &&
-  giteeConfig.value.repo && giteeConfig.value.repo.trim() !== ''
+const hasGiteeSyncConfig = computed(() =>
+  giteeSyncConfig.value.token && giteeSyncConfig.value.token.trim() !== '' &&
+  giteeSyncConfig.value.repo && giteeSyncConfig.value.repo.trim() !== ''
 )
 
 const syncStatus = computed(() => {
@@ -329,12 +424,24 @@ const syncStatusText = computed(() => {
 onMounted(async () => {
   webdavConfig.value = await syncService.getWebDAVConfig()
   
-  // 加载 Gitee 配置
-  const giteeToken = await db.getSetting('gitee_token', '')
-  const giteeRepo = await db.getSetting('gitee_repo', '')
-  const giteeFilePath = await db.getSetting('gitee_file_path', 'data/universal-pim.json')
-  const giteeBranch = await db.getSetting('gitee_branch', 'master')
-  giteeConfig.value = { token: giteeToken, repo: giteeRepo, filePath: giteeFilePath, branch: giteeBranch }
+  // 加载 Gitee 同步配置
+  const giteeSyncCfg = await giteeSyncService.getGiteeConfig(db)
+  giteeSyncConfig.value = giteeSyncCfg
+  
+  // 如果已配置，获取远程数据概览
+  if (giteeSyncCfg.token && giteeSyncCfg.repo) {
+    try {
+      remoteOverview.value = await giteeSyncService.getRemoteOverview(giteeSyncCfg)
+      if (remoteOverview.value?.stats?.years) {
+        availableYears.value = remoteOverview.value.stats.years
+      } else {
+        // 尝试获取可用年份
+        availableYears.value = await giteeSyncService.getAvailableYears(giteeSyncCfg)
+      }
+    } catch (e) {
+      console.log('[Settings] Failed to get remote overview:', e.message)
+    }
+  }
   
   // 监听同步状态变化
   syncService.addListener((status) => {
@@ -376,95 +483,119 @@ async function saveWebDAVConfig() {
   }
 }
 
-function openGiteeModal() {
-  giteeForm.value = {
-    token: giteeConfig.value.token || '',
-    repo: giteeConfig.value.repo || '',
-    filePath: giteeConfig.value.filePath || 'data/universal-pim.json',
-    branch: giteeConfig.value.branch || 'master'
+function openGiteeSyncModal() {
+  giteeSyncForm.value = {
+    token: giteeSyncConfig.value.token || '',
+    repo: giteeSyncConfig.value.repo || '',
+    path: giteeSyncConfig.value.path || 'data/universal-pim/',
+    branch: giteeSyncConfig.value.branch || 'master'
   }
-  showGiteeModal.value = true
+  showGiteeSyncModal.value = true
 }
 
-async function saveGiteeConfig() {
+async function saveGiteeSyncConfig() {
   saving.value = true
   try {
-    await db.setSetting('gitee_token', giteeForm.value.token)
-    await db.setSetting('gitee_repo', giteeForm.value.repo)
-    await db.setSetting('gitee_file_path', giteeForm.value.filePath)
-    await db.setSetting('gitee_branch', giteeForm.value.branch)
-    giteeConfig.value = { ...giteeForm.value }
-    showGiteeModal.value = false
+    await giteeSyncService.saveGiteeConfig(db, giteeSyncForm.value)
+    giteeSyncConfig.value = { ...giteeSyncForm.value }
+    showGiteeSyncModal.value = false
+    
+    // 保存后获取远程数据概览
+    try {
+      remoteOverview.value = await giteeSyncService.getRemoteOverview(giteeSyncConfig.value)
+      availableYears.value = await giteeSyncService.getAvailableYears(giteeSyncConfig.value)
+    } catch (e) {
+      console.log('[Settings] Failed to get remote overview:', e.message)
+    }
   } finally {
     saving.value = false
   }
 }
 
-async function pushToGitee() {
-  giteePushing.value = true
+async function exportToGitee() {
+  giteeSyncProgress.value = { phase: '开始导出', current: 0, total: 1 }
+  
   try {
-    // 导出数据
-    const data = await db.exportData()
-    const content = JSON.stringify(data, null, 2)
+    // 导出联系人
+    giteeSyncProgress.value = { phase: '导出联系人', current: 0, total: 2 }
+    const contactsResult = await giteeSyncService.exportContacts(db, giteeSyncConfig.value, (p) => {
+      giteeSyncProgress.value = { ...p, total: 2 }
+    })
     
-    // 调用 Gitee API
-    const [owner, repo] = giteeConfig.value.repo.split('/')
-    const filePath = giteeConfig.value.filePath
-    const branch = giteeConfig.value.branch || 'master'
+    // 导出消息（按年/月）
+    giteeSyncProgress.value = { phase: '导出消息', current: 1, total: 2 }
+    const messagesResult = await giteeSyncService.exportMessages(db, giteeSyncConfig.value, (p) => {
+      giteeSyncProgress.value = { ...p, current: 1 + p.current, total: 2 + p.total }
+    })
     
-    // 先获取文件是否存在（获取 sha）
-    let sha = null
-    try {
-      const getResponse = await fetch(
-        `https://gitee.com/api/v5/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`,
-        {
-          headers: {
-            'Authorization': `token ${giteeConfig.value.token}`
-          }
+    // 导出元数据
+    giteeSyncProgress.value = { phase: '导出元数据', current: 2, total: 2 }
+    await giteeSyncService.exportMetadata(db, giteeSyncConfig.value, {
+      contacts: contactsResult.count,
+      messages: messagesResult.count,
+      years: Array.from(new Set(
+        (await db.getAllMessages()).map(m => new Date(m.timestamp).getFullYear().toString())
+      ))
+    })
+    
+    giteeSyncProgress.value = null
+    alert(`导出成功！\n联系人：${contactsResult.count} 条\n消息：${messagesResult.count} 条（${messagesResult.files} 个文件）`)
+    
+    // 更新远程数据概览
+    remoteOverview.value = await giteeSyncService.getRemoteOverview(giteeSyncConfig.value)
+    availableYears.value = await giteeSyncService.getAvailableYears(giteeSyncConfig.value)
+  } catch (e) {
+    giteeSyncProgress.value = null
+    alert(`导出失败：${e.message}`)
+  }
+}
+
+async function importFromGitee() {
+  giteeSyncProgress.value = { phase: '开始导入', current: 0, total: 1 }
+  
+  try {
+    let importedContacts = 0
+    let skippedContacts = 0
+    let importedMessages = 0
+    let skippedMessages = 0
+    
+    // 导入联系人
+    if (giteeImportForm.value.importContacts) {
+      giteeSyncProgress.value = { phase: '导入联系人', current: 0, total: 2 }
+      const contactsResult = await giteeSyncService.importContacts(db, giteeSyncConfig.value, (p) => {
+        giteeSyncProgress.value = { ...p, total: 2 }
+      })
+      importedContacts = contactsResult.imported
+      skippedContacts = contactsResult.skipped
+    }
+    
+    // 导入消息
+    if (giteeImportForm.value.selectedYears.length > 0) {
+      giteeSyncProgress.value = { phase: '导入消息', current: 1, total: 2 }
+      const messagesResult = await giteeSyncService.importMessages(
+        db, 
+        giteeSyncConfig.value, 
+        giteeImportForm.value.selectedYears,
+        null,
+        (p) => {
+          giteeSyncProgress.value = { ...p, current: 1 + p.current, total: 2 + p.total }
         }
       )
-      if (getResponse.ok) {
-        const existingFile = await getResponse.json()
-        sha = existingFile.sha
-      }
-    } catch (e) {
-      // 文件不存在，忽略
+      importedMessages = messagesResult.imported
+      skippedMessages = messagesResult.skipped
     }
     
-    // 创建或更新文件
-    const body = {
-      access_token: giteeConfig.value.token,
-      content: btoa(unescape(encodeURIComponent(content))), // Base64 编码
-      message: `更新 Universal-PIM 数据 - ${new Date().toLocaleString('zh-CN')}`,
-      branch: branch
-    }
+    giteeSyncProgress.value = null
+    showGiteeImportModal.value = false
     
-    if (sha) {
-      body.sha = sha
-    }
+    // 刷新本地数据
+    await contactStore.init()
+    await messageStore.init()
     
-    const method = sha ? 'PUT' : 'POST'
-    const response = await fetch(
-      `https://gitee.com/api/v5/repos/${owner}/${repo}/contents/${filePath}`,
-      {
-        method: method,
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-      }
-    )
-    
-    if (response.ok) {
-      alert('数据已成功提交到 Gitee！')
-    } else {
-      const error = await response.json()
-      alert(`提交失败: ${error.message || JSON.stringify(error)}`)
-    }
+    alert(`导入成功！\n联系人：导入 ${importedContacts} 条，跳过 ${skippedContacts} 条\n消息：导入 ${importedMessages} 条，跳过 ${skippedMessages} 条`)
   } catch (e) {
-    alert(`提交失败: ${e.message}`)
-  } finally {
-    giteePushing.value = false
+    giteeSyncProgress.value = null
+    alert(`导入失败：${e.message}`)
   }
 }
 
@@ -676,5 +807,67 @@ async function importData(event) {
 
 .toggle input:checked + .toggle-slider::before {
   transform: translateX(24px);
+}
+
+.sync-progress {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.progress-bar {
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.year-checkboxes {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #f8fafc;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.checkbox-label:hover {
+  background: #f1f5f9;
+}
+
+.import-info {
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.import-info ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.import-info li {
+  margin: 4px 0;
 }
 </style>
