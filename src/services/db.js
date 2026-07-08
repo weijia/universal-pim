@@ -164,6 +164,11 @@ class DatabaseService {
 
   // Settings
   async getSetting(key, defaultValue = null) {
+    if (!this.settingsDB) {
+      console.log('[DB] getSetting: settingsDB not initialized, initializing now...')
+      await this.init()
+    }
+    
     try {
       const doc = await this.settingsDB.get(`setting_${key}`)
       console.log(`[DB] getSetting(${key}):`, doc.value)
@@ -175,6 +180,11 @@ class DatabaseService {
   }
 
   async setSetting(key, value) {
+    if (!this.settingsDB) {
+      console.log('[DB] setSetting: settingsDB not initialized, initializing now...')
+      await this.init()
+    }
+    
     console.log(`[DB] setSetting(${key}):`, value)
     const id = `setting_${key}`
     let doc = { _id: id }

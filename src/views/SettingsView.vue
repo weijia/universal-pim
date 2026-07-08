@@ -422,6 +422,9 @@ const syncStatusText = computed(() => {
 })
 
 onMounted(async () => {
+  // 确保 db 已初始化
+  await db.init()
+  
   webdavConfig.value = await syncService.getWebDAVConfig()
   
   // 加载 Gitee 同步配置
