@@ -842,6 +842,58 @@ function validateSmsRecord(record, index) {
   return { valid: true }
 }
 
+// 更新联系人的联系频率（根据消息记录）
+async function updateContactFrequencies() {
+  // 获取所有消息
+  const allMessages = await db.getAllMessages()
+  
+  // 统计每个联系人的消息数量和最近联系时间
+  const contactStats = new Map()
+  
+  allMessages.forEach(msg => {
+    const contactId = msg.contactId
+    if (!contactId) return
+    
+    if (!contactStats.has(contactId)) {
+      contactStats.set(contactId, {
+        count: 0,
+        lastContacted: null
+      })
+    }
+    
+    const stats = contactStats.get(contactId)
+    stats.count++
+    
+    // 更新最近联系时间
+    const msgTime = new Date(msg.timestamp)
+    if (!stats.lastContacted || msgTime > new Date(stats.lastContacted)) {
+      stats.lastContacted = msg.timestamp
+    }
+  })
+  
+  // 更新联系人记录
+  for (const [contactId, stats] of contactStats) {
+    try {
+      const contact = await db.getContact(contactId)
+      if (contact) {
+        // 更新联系频率（收发消息总次数）
+        contact.contactFrequency = stats.count
+        // 更新最近联系时间
+        if (stats.lastContacted) {
+          contact.lastContacted = stats.lastContacted
+        }
+        
+        await db.saveContact(contact)
+        console.log('[Import] Updated contact:', contact.name, 'frequency:', stats.count)
+      }
+    } catch (e) {
+      console.log('[Import] Failed to update contact:', contactId, e.message)
+    }
+  }
+  
+  console.log('[Import] Updated', contactStats.size, 'contacts')
+}
+
 // 导入短信备份
 async function importSmsBackup(event) {
   const files = Array.from(event.target.files)
@@ -910,8 +962,13 @@ async function importSmsBackup(event) {
   // 保存已导入的文件名列表
   await db.setSetting('imported_files', importedFiles)
   
-  // 刷新消息列表
+  // 更新联系人的联系频率
+  console.log('[Import] Updating contact frequencies...')
+  await updateContactFrequencies()
+  
+  // 刷新消息列表和联系人列表
   await messageStore.init()
+  await contactStore.init()
   
   importProgress.value = null
   
