@@ -17,6 +17,29 @@
       />
     </div>
 
+    <!-- 标签筛选 -->
+    <div v-if="allTags.length > 0" class="tag-filter">
+      <span class="tag-filter-label">筛选：</span>
+      <div class="tag-filter-list">
+        <button 
+          v-for="tag in allTags" 
+          :key="tag"
+          class="tag-filter-btn"
+          :class="{ active: selectedTag === tag }"
+          @click="toggleTagFilter(tag)"
+        >
+          {{ tag }}
+        </button>
+      </div>
+      <button 
+        v-if="selectedTag" 
+        class="tag-filter-clear"
+        @click="selectedTag = null; displayCount = PAGE_SIZE"
+      >
+        清除筛选
+      </button>
+    </div>
+
     <div class="tabs">
       <button 
         class="tab-btn" 
@@ -192,6 +215,7 @@ const displayCount = ref(50)
 const PAGE_SIZE = 50
 const importResult = ref(null)
 const showSkipped = ref(false)
+const selectedTag = ref(null)  // 当前选中的标签筛选
 
 const formData = ref({
   name: '',
@@ -634,13 +658,50 @@ async function importJSONContacts(text) {
   }
 }
 
-// 可见联系人（分页）
+// 可见联系人（分页 + 标签筛选）
 const visibleContacts = computed(() => {
-  return contactStore.searchResults.slice(0, displayCount.value)
+  let results = contactStore.searchResults
+  
+  // 如果选择了标签，按标签筛选
+  if (selectedTag.value) {
+    results = results.filter(contact => 
+      contact.tags && contact.tags.includes(selectedTag.value)
+    )
+  }
+  
+  return results.slice(0, displayCount.value)
 })
 
+// 获取所有标签（去重并排序）
+const allTags = computed(() => {
+  const tagSet = new Set()
+  contactStore.contacts.forEach(contact => {
+    if (contact.tags && Array.isArray(contact.tags)) {
+      contact.tags.forEach(tag => tagSet.add(tag))
+    }
+  })
+  return Array.from(tagSet).sort()
+})
+
+// 切换标签筛选
+function toggleTagFilter(tag) {
+  if (selectedTag.value === tag) {
+    selectedTag.value = null  // 取消选中
+  } else {
+    selectedTag.value = tag
+  }
+  // 重置分页
+  displayCount.value = PAGE_SIZE
+}
+
 const allLoaded = computed(() => {
-  return displayCount.value >= contactStore.searchResults.length
+  let results = contactStore.searchResults
+  if (selectedTag.value) {
+    results = results.filter(contact => 
+      contact.tags && contact.tags.includes(selectedTag.value)
+    )
+  }
+  return displayCount.value >= results.length
 })
 
 // 重置分页当搜索条件变化
@@ -938,5 +999,67 @@ defineExpose({
   .view-modes {
     justify-content: center;
   }
+}
+
+/* 标签筛选 */
+.tag-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  overflow-x: auto;
+  flex-wrap: wrap;
+}
+
+.tag-filter-label {
+  font-size: 14px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.tag-filter-list {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tag-filter-btn {
+  padding: 4px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.tag-filter-btn:hover {
+  background: var(--primary-light);
+  border-color: var(--primary);
+}
+
+.tag-filter-btn.active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+}
+
+.tag-filter-clear {
+  padding: 4px 12px;
+  font-size: 13px;
+  border: none;
+  border-radius: 16px;
+  background: #ef4444;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tag-filter-clear:hover {
+  background: #dc2626;
 }
 </style>
