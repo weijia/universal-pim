@@ -275,7 +275,8 @@ function parseVCard(text) {
       emails: [],
       organization: '',
       notes: '',
-      url: ''
+      url: '',
+      categories: []  // 新增：分组/分类
     }
     
     const lines = block.split(/\r?\n/)
@@ -320,6 +321,26 @@ function parseVCard(text) {
       // 解析 URL (网址)
       if (line.startsWith('URL:')) {
         contact.url = line.substring(4).trim()
+      }
+      
+      // 解析 CATEGORIES (分组/分类) - vCard 4.0 标准
+      if (line.startsWith('CATEGORIES')) {
+        const value = line.includes(':') ? line.split(':').slice(1).join(':') : ''
+        // CATEGORIES 值是逗号分隔的多个分类
+        const categories = decodeVCardValue(value).split(',').map(c => c.trim()).filter(c => c)
+        contact.categories = categories
+      }
+      
+      // 解析 X-ANDROID-CUSTOM (Android 自定义字段，可能包含分组)
+      // v2格式: X-ANDROID-CUSTOM:vnd.android.cursor.item/group;group_name
+      if (line.startsWith('X-ANDROID-CUSTOM:vnd.android.cursor.item/group')) {
+        const parts = line.split(';')
+        if (parts.length >= 2) {
+          const groupName = parts[1].trim()
+          if (groupName && groupName !== 'vnd.android.cursor.item/group') {
+            contact.categories.push(groupName)
+          }
+        }
       }
     }
     
@@ -461,12 +482,17 @@ async function importVCardContacts(text) {
     
     // 创建联系人
     try {
+      // 合并分类到标签（如果有分类则使用分类，否则使用 'vCard导入'）
+      const tags = contact.categories.length > 0 
+        ? [...contact.categories, 'vCard导入'] 
+        : ['vCard导入']
+      
       await contactStore.addContact({
         name: contact.name || phone || email,
         phone: phone,
         email: email,
         notes: contact.notes || (contact.organization ? `组织: ${contact.organization}` : ''),
-        tags: ['vCard导入'],
+        tags: tags,
         source: 'vcard'
       })
       imported++
