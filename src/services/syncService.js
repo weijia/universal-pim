@@ -103,6 +103,11 @@ class SyncService {
           log('unlink success:', path)
           return result
         } catch (e) {
+          // 如果是 404 错误，说明文件不存在，可以忽略
+          if (e.message?.includes('404') || e.status === 404) {
+            log('unlink: file not found (404), ignoring:', path)
+            return true
+          }
           log('unlink error:', path, e.message)
           throw e
         }
@@ -114,6 +119,11 @@ class SyncService {
           log('rmdir success:', path)
           return result
         } catch (e) {
+          // 如果是 404 错误，说明目录不存在，可以忽略
+          if (e.message?.includes('404') || e.status === 404) {
+            log('rmdir: directory not found (404), ignoring:', path)
+            return true
+          }
           log('rmdir error:', path, e.message)
           throw e
         }
