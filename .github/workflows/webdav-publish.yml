@@ -39,13 +39,14 @@ jobs:
         run: npm run build
 
       - name: Upload to WebDAV
-        uses: weijia/action-upload-webdav@master
-        with:
-          webdav-url: ${{ secrets.WEBDAV_URL }}
-          webdav-username: ${{ secrets.WEBDAV_USERNAME }}
-          webdav-password: ${{ secrets.WEBDAV_PASSWORD }}
-          webdav-root: online/universal-pim
-          source-directory: ./dist
+      uses: weijia/action-upload-webdav@master
+      with:
+        webdav-url: ${{ secrets.WEBDAV_URL }}
+        webdav-username: ${{ secrets.WEBDAV_USERNAME }}
+        webdav-password: ${{ secrets.WEBDAV_PASSWORD }}
+        webdav-root: online/universal-pim
+        source-directory: ./dist
+        copy-to-latest: true
 
       - name: Deploy to GitHub Pages
         if: startsWith(github.ref, 'refs/tags/v')
