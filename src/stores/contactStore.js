@@ -158,6 +158,7 @@ export const useContactStore = defineStore('contacts', () => {
     toggleArchive,
     toggleFavorite,
     incrementFrequency,
-    getContact
+    getContact,
+    getAllContacts: () => contacts.value
   }
 })

@@ -259,6 +259,113 @@ function extractContactInfo(rawContact) {
   return info
 }
 
+// 解析 vCard 文件（.vcf）
+function parseVCard(text) {
+  const contacts = []
+  const vcardBlocks = text.split(/(?=BEGIN:VCARD)/gi).filter(block => block.trim())
+  
+  for (const block of vcardBlocks) {
+    if (!block.includes('BEGIN:VCARD') || !block.includes('END:VCARD')) {
+      continue
+    }
+    
+    const contact = {
+      name: '',
+      phones: [],
+      emails: [],
+      organization: '',
+      notes: '',
+      url: ''
+    }
+    
+    const lines = block.split(/\r?\n/)
+    
+    for (const line of lines) {
+      // 解析 FN (全名)
+      if (line.startsWith('FN:') || line.startsWith('FN;')) {
+        const value = line.includes(':') ? line.split(':').slice(1).join(':') : ''
+        contact.name = decodeVCardValue(value)
+      }
+      
+      // 解析 TEL (电话)
+      if (line.startsWith('TEL')) {
+        const value = line.includes(':') ? line.split(':').slice(1).join(':') : ''
+        const phone = decodeVCardValue(value).replace(/[#\s]/g, '') // 移除 # 和空格
+        if (phone) {
+          contact.phones.push(phone)
+        }
+      }
+      
+      // 解析 EMAIL (邮箱)
+      if (line.startsWith('EMAIL')) {
+        const value = line.includes(':') ? line.split(':').slice(1).join(':') : ''
+        const email = decodeVCardValue(value)
+        if (email) {
+          contact.emails.push(email)
+        }
+      }
+      
+      // 解析 ORG (组织)
+      if (line.startsWith('ORG')) {
+        const value = line.includes(':') ? line.split(':').slice(1).join(':') : ''
+        contact.organization = decodeVCardValue(value)
+      }
+      
+      // 解析 NOTE (备注)
+      if (line.startsWith('NOTE')) {
+        const value = line.includes(':') ? line.split(':').slice(1).join(':') : ''
+        contact.notes = decodeVCardValue(value)
+      }
+      
+      // 解析 URL (网址)
+      if (line.startsWith('URL:')) {
+        contact.url = line.substring(4).trim()
+      }
+    }
+    
+    // 只有有名字或有电话/邮箱才添加
+    if (contact.name || contact.phones.length > 0 || contact.emails.length > 0) {
+      contacts.push(contact)
+    }
+  }
+  
+  return contacts
+}
+
+// 解码 vCard 值（处理转义字符和编码）
+function decodeVCardValue(value) {
+  if (!value) return ''
+  
+  // 处理转义的逗号和分号
+  let decoded = value.replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\n/gi, '\n')
+  
+  // 处理 CHARSET=UTF-8 编码（实际大多数情况下不需要特殊处理）
+  return decoded.trim()
+}
+
+// 检查联系人是否已存在（按电话号码或邮箱匹配）
+async function checkContactExists(phone, email) {
+  const allContacts = await contactStore.getAllContacts()
+  
+  for (const contact of allContacts) {
+    // 检查电话号码匹配
+    if (phone && contact.phone) {
+      const existingPhone = contact.phone.replace(/[\s\-#]/g, '')
+      const newPhone = phone.replace(/[\s\-#]/g, '')
+      if (existingPhone === newPhone) {
+        return { exists: true, match: 'phone', contact }
+      }
+    }
+    
+    // 检查邮箱匹配
+    if (email && contact.email && contact.email.toLowerCase() === email.toLowerCase()) {
+      return { exists: true, match: 'email', contact }
+    }
+  }
+  
+  return { exists: false }
+}
+
 // 校验单条联系人记录
 function validateContactRecord(record, index) {
   // 必须是对象
@@ -295,118 +402,18 @@ async function importContacts(event) {
   
   try {
     const text = await file.text()
-    let data = []
+    const fileExt = file.name.toLowerCase().split('.').pop()
     
-    // 尝试解析 JSON
-    try {
-      const parsed = JSON.parse(text)
-      if (Array.isArray(parsed)) {
-        data = parsed
-      } else {
-        importResult.value = {
-          type: 'error',
-          message: 'JSON 格式不正确：需要联系人数组',
-          skipped: []
-        }
-        event.target.value = ''
-        return
-      }
-    } catch (e) {
-      importResult.value = {
-        type: 'error',
-        message: `JSON 解析失败：${e.message}`,
-        skipped: []
-      }
-      event.target.value = ''
-      return
+    // 检测文件类型并解析
+    if (fileExt === 'vcf') {
+      // vCard 格式
+      console.log('[Import] Detected vCard format')
+      await importVCardContacts(text)
+    } else {
+      // JSON 格式（小米通讯录）
+      console.log('[Import] Detected JSON format')
+      await importJSONContacts(text)
     }
-    
-    if (data.length === 0) {
-      importResult.value = {
-        type: 'error',
-        message: '文件中没有可导入的联系人',
-        skipped: []
-      }
-      event.target.value = ''
-      return
-    }
-    
-    // 校验所有记录
-    const skipped = []
-    const validRecords = []
-    
-    data.forEach((record, index) => {
-      const result = validateContactRecord(record, index)
-      if (result.valid) {
-        validRecords.push({ record, unknownFields: result.unknownFields })
-      } else {
-        skipped.push({ index, reason: result.reason })
-      }
-    })
-    
-    if (validRecords.length === 0) {
-      importResult.value = {
-        type: 'error',
-        message: `共 ${data.length} 条记录，全部校验失败`,
-        skipped
-      }
-      event.target.value = ''
-      return
-    }
-    
-    // 确认导入
-    const confirmMsg = skipped.length > 0
-      ? `共 ${data.length} 条记录，${validRecords.length} 条有效，${skipped.length} 条将被跳过。是否导入有效的 ${validRecords.length} 条联系人？`
-      : `共 ${data.length} 条记录，全部校验通过。是否导入？`
-    
-    if (!confirm(confirmMsg)) {
-      importResult.value = null
-      event.target.value = ''
-      return
-    }
-    
-    // 导入有效记录
-    let imported = 0
-    for (const { record } of validRecords) {
-      // 从 raw_contacts 提取信息
-      let contactInfo = {
-        name: record.display_name,
-        phone: '',
-        email: '',
-        notes: ''
-      }
-      
-      if (record.raw_contacts && Array.isArray(record.raw_contacts) && record.raw_contacts.length > 0) {
-        const rawContact = record.raw_contacts[0]
-        contactInfo = extractContactInfo(rawContact)
-        // 如果 raw_contact 中没有名字，使用顶层的 display_name
-        if (!contactInfo.name) {
-          contactInfo.name = record.display_name
-        }
-      }
-      
-      // 生成唯一 ID
-      const contactId = `imported_${record._id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      
-      await contactStore.addContact({
-        _id: contactId,
-        name: contactInfo.name,
-        phone: contactInfo.phone,
-        email: contactInfo.email,
-        notes: contactInfo.notes,
-        tags: ['导入'],
-        sourceId: record._id,
-        sourceAccount: record.account_name || ''
-      })
-      imported++
-    }
-    
-    importResult.value = {
-      type: 'success',
-      message: `成功导入 ${imported} 条联系人` + (skipped.length > 0 ? `，跳过 ${skipped.length} 条` : ''),
-      skipped
-    }
-    
   } catch (error) {
     importResult.value = {
       type: 'error',
@@ -416,6 +423,189 @@ async function importContacts(event) {
   }
   
   event.target.value = ''
+}
+
+// 导入 vCard 联系人
+async function importVCardContacts(text) {
+  const contacts = parseVCard(text)
+  
+  if (contacts.length === 0) {
+    importResult.value = {
+      type: 'error',
+      message: 'vCard 文件中没有可导入的联系人',
+      skipped: []
+    }
+    return
+  }
+  
+  // 检查重复并导入
+  const skipped = []
+  const duplicates = []
+  let imported = 0
+  
+  for (let i = 0; i < contacts.length; i++) {
+    const contact = contacts[i]
+    const phone = contact.phones[0] || ''
+    const email = contact.emails[0] || ''
+    
+    // 检查是否已存在
+    const existsCheck = await checkContactExists(phone, email)
+    if (existsCheck.exists) {
+      duplicates.push({
+        index: i,
+        name: contact.name || phone || email,
+        reason: `与现有联系人"${existsCheck.contact.name}"${existsCheck.match === 'phone' ? '电话' : '邮箱'}相同`
+      })
+      continue
+    }
+    
+    // 创建联系人
+    try {
+      await contactStore.addContact({
+        name: contact.name || phone || email,
+        phone: phone,
+        email: email,
+        notes: contact.notes || (contact.organization ? `组织: ${contact.organization}` : ''),
+        tags: ['vCard导入'],
+        source: 'vcard'
+      })
+      imported++
+    } catch (e) {
+      skipped.push({ index: i, reason: e.message })
+    }
+  }
+  
+  importResult.value = {
+    type: imported > 0 ? 'success' : 'error',
+    message: `成功导入 ${imported} 条联系人` + 
+             (duplicates.length > 0 ? `，跳过 ${duplicates.length} 条重复` : '') +
+             (skipped.length > 0 ? `，${skipped.length} 条失败` : ''),
+    skipped: [...skipped, ...duplicates]
+  }
+}
+
+// 导入 JSON 联系人（小米通讯录格式）
+async function importJSONContacts(text) {
+  let data = []
+  
+  // 尝试解析 JSON
+  try {
+    const parsed = JSON.parse(text)
+    if (Array.isArray(parsed)) {
+      data = parsed
+    } else {
+      importResult.value = {
+        type: 'error',
+        message: 'JSON 格式不正确：需要联系人数组',
+        skipped: []
+      }
+      return
+    }
+  } catch (e) {
+    importResult.value = {
+      type: 'error',
+      message: `JSON 解析失败：${e.message}`,
+      skipped: []
+    }
+    return
+  }
+  
+  if (data.length === 0) {
+    importResult.value = {
+      type: 'error',
+      message: '文件中没有可导入的联系人',
+      skipped: []
+    }
+    return
+  }
+  
+  // 校验所有记录
+  const skipped = []
+  const validRecords = []
+  
+  data.forEach((record, index) => {
+    const result = validateContactRecord(record, index)
+    if (result.valid) {
+      validRecords.push({ record, unknownFields: result.unknownFields })
+    } else {
+      skipped.push({ index, reason: result.reason })
+    }
+  })
+  
+  if (validRecords.length === 0) {
+    importResult.value = {
+      type: 'error',
+      message: `共 ${data.length} 条记录，全部校验失败`,
+      skipped
+    }
+    return
+  }
+  
+  // 确认导入
+  const confirmMsg = skipped.length > 0
+    ? `共 ${data.length} 条记录，${validRecords.length} 条有效，${skipped.length} 条将被跳过。是否导入有效的 ${validRecords.length} 条联系人？`
+    : `共 ${data.length} 条记录，全部校验通过。是否导入？`
+  
+  if (!confirm(confirmMsg)) {
+    importResult.value = null
+    return
+  }
+  
+  // 导入有效记录（检查重复）
+  let imported = 0
+  const duplicates = []
+  
+  for (const { record } of validRecords) {
+    // 从 raw_contacts 提取信息
+    let contactInfo = {
+      name: record.display_name,
+      phone: '',
+      email: '',
+      notes: ''
+    }
+    
+    if (record.raw_contacts && Array.isArray(record.raw_contacts) && record.raw_contacts.length > 0) {
+      const rawContact = record.raw_contacts[0]
+      contactInfo = extractContactInfo(rawContact)
+      // 如果 raw_contact 中没有名字，使用顶层的 display_name
+      if (!contactInfo.name) {
+        contactInfo.name = record.display_name
+      }
+    }
+    
+    // 检查是否已存在
+    const existsCheck = await checkContactExists(contactInfo.phone, contactInfo.email)
+    if (existsCheck.exists) {
+      duplicates.push({
+        name: contactInfo.name || contactInfo.phone || contactInfo.email,
+        reason: `与现有联系人"${existsCheck.contact.name}"${existsCheck.match === 'phone' ? '电话' : '邮箱'}相同`
+      })
+      continue
+    }
+    
+    // 生成唯一 ID
+    const contactId = `imported_${record._id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    
+    await contactStore.addContact({
+      _id: contactId,
+      name: contactInfo.name,
+      phone: contactInfo.phone,
+      email: contactInfo.email,
+      notes: contactInfo.notes,
+      tags: ['导入'],
+      sourceId: record._id,
+      sourceAccount: record.account_name || ''
+    })
+    imported++
+  }
+  
+  importResult.value = {
+    type: imported > 0 ? 'success' : 'error',
+    message: `成功导入 ${imported} 条联系人` + 
+             (duplicates.length > 0 ? `，跳过 ${duplicates.length} 条重复` : '') +
+             (skipped.length > 0 ? `，${skipped.length} 条无效` : ''),
+    skipped: [...skipped, ...duplicates]
+  }
 }
 
 // 可见联系人（分页）
