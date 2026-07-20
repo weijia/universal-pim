@@ -34,6 +34,31 @@
         </div>
       </div>
 
+      <!-- 标签管理 -->
+      <div class="settings-section">
+        <h2 class="settings-title">标签管理</h2>
+        
+        <div v-if="allTags.length === 0" class="setting-item">
+          <div class="setting-info">
+            <p>暂无标签，导入联系人时会自动创建标签</p>
+          </div>
+        </div>
+
+        <div v-else class="tag-list">
+          <div v-for="tag in allTags" :key="tag.name" class="tag-item">
+            <div class="tag-info">
+              <span class="tag-name">{{ tag.name }}</span>
+              <span class="tag-count">{{ tag.count }} 个联系人</span>
+            </div>
+            <div class="tag-actions">
+              <button class="btn btn-secondary btn-sm" @click="openRenameTagModal(tag.name)">重命名</button>
+              <button class="btn btn-secondary btn-sm" @click="openMergeTagModal(tag.name)">合并</button>
+              <button class="btn btn-danger btn-sm" @click="confirmDeleteTag(tag.name)">删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- WebDAV 同步 -->
       <div class="settings-section">
         <h2 class="settings-title">WebDAV 同步</h2>
@@ -341,6 +366,72 @@
         </form>
       </div>
     </div>
+
+    <!-- 重命名标签模态框 -->
+    <div v-if="showRenameTagModal" class="modal-overlay" @click.self="showRenameTagModal = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">重命名标签</h2>
+          <button class="modal-close" @click="showRenameTagModal = false">&times;</button>
+        </div>
+
+        <form @submit.prevent="renameTag">
+          <div class="form-group">
+            <label>原标签名</label>
+            <input type="text" :value="editingTagName" disabled />
+          </div>
+          
+          <div class="form-group">
+            <label>新标签名</label>
+            <input v-model="newTagName" type="text" placeholder="输入新的标签名" />
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-secondary" @click="showRenameTagModal = false">
+              取消
+            </button>
+            <button type="submit" class="btn btn-primary" :disabled="!newTagName || newTagName === editingTagName">
+              确认重命名
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 合并标签模态框 -->
+    <div v-if="showMergeTagModal" class="modal-overlay" @click.self="showMergeTagModal = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">合并标签</h2>
+          <button class="modal-close" @click="showMergeTagModal = false">&times;</button>
+        </div>
+
+        <div class="merge-info">
+          <p>将标签 <strong>{{ mergingTagName }}</strong> 合并到：</p>
+        </div>
+
+        <form @submit.prevent="mergeTag">
+          <div class="form-group">
+            <label>目标标签</label>
+            <select v-model="targetTagName" required>
+              <option value="">请选择目标标签</option>
+              <option v-for="tag in allTags.filter(t => t.name !== mergingTagName)" :key="tag.name" :value="tag.name">
+                {{ tag.name }} ({{ tag.count }} 人)
+              </option>
+            </select>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-secondary" @click="showMergeTagModal = false">
+              取消
+            </button>
+            <button type="submit" class="btn btn-primary" :disabled="!targetTagName">
+              确认合并
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -365,6 +456,8 @@ const messageStore = useMessageStore()
 const showWebDAVModal = ref(false)
 const showGiteeSyncModal = ref(false)
 const showGiteeImportModal = ref(false)
+const showRenameTagModal = ref(false)
+const showMergeTagModal = ref(false)
 const testing = ref(false)
 const syncing = ref(false)
 const saving = ref(false)
@@ -398,6 +491,12 @@ const giteeImportForm = ref({
   selectedYears: []
 })
 
+// 标签管理相关
+const editingTagName = ref('')
+const newTagName = ref('')
+const mergingTagName = ref('')
+const targetTagName = ref('')
+
 const hasWebDAVConfig = computed(() =>
   webdavConfig.value.url && webdavConfig.value.url.trim() !== ''
 )
@@ -406,6 +505,21 @@ const hasGiteeSyncConfig = computed(() =>
   giteeSyncConfig.value.token && giteeSyncConfig.value.token.trim() !== '' &&
   giteeSyncConfig.value.repo && giteeSyncConfig.value.repo.trim() !== ''
 )
+
+// 所有标签（带计数）
+const allTags = computed(() => {
+  const tagCount = new Map()
+  contactStore.contacts.forEach(contact => {
+    if (contact.tags && Array.isArray(contact.tags)) {
+      contact.tags.forEach(tag => {
+        tagCount.set(tag, (tagCount.get(tag) || 0) + 1)
+      })
+    }
+  })
+  return Array.from(tagCount.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+})
 
 const syncStatus = computed(() => {
   if (syncService.isSyncing) return 'syncing'
@@ -614,6 +728,89 @@ async function testConnection() {
   } finally {
     testing.value = false
   }
+}
+
+// 标签管理函数
+function openRenameTagModal(tagName) {
+  editingTagName.value = tagName
+  newTagName.value = tagName
+  showRenameTagModal.value = true
+}
+
+function openMergeTagModal(tagName) {
+  mergingTagName.value = tagName
+  targetTagName.value = ''
+  showMergeTagModal.value = true
+}
+
+async function renameTag() {
+  if (!newTagName.value || newTagName.value === editingTagName.value) return
+  
+  const oldName = editingTagName.value
+  const newName = newTagName.value.trim()
+  
+  if (!confirm(`确定将标签"${oldName}"重命名为"${newName}"吗？\n这将更新所有使用该标签的联系人。`)) {
+    return
+  }
+  
+  let updatedCount = 0
+  for (const contact of contactStore.contacts) {
+    if (contact.tags && contact.tags.includes(oldName)) {
+      // 替换标签名
+      const newTags = contact.tags.map(t => t === oldName ? newName : t)
+      await contactStore.updateContact({ ...contact, tags: newTags })
+      updatedCount++
+    }
+  }
+  
+  showRenameTagModal.value = false
+  alert(`已将 ${updatedCount} 个联系人的标签"${oldName}"重命名为"${newName}"`)
+}
+
+async function mergeTag() {
+  if (!targetTagName.value) return
+  
+  const sourceTag = mergingTagName.value
+  const targetTag = targetTagName.value
+  
+  if (!confirm(`确定将标签"${sourceTag}"合并到"${targetTag}"吗？\n所有使用"${sourceTag}"的联系人将改用"${targetTag}"。`)) {
+    return
+  }
+  
+  let updatedCount = 0
+  for (const contact of contactStore.contacts) {
+    if (contact.tags && contact.tags.includes(sourceTag)) {
+      // 移除源标签，添加目标标签（如果不存在）
+      const newTags = contact.tags.filter(t => t !== sourceTag)
+      if (!newTags.includes(targetTag)) {
+        newTags.push(targetTag)
+      }
+      await contactStore.updateContact({ ...contact, tags: newTags })
+      updatedCount++
+    }
+  }
+  
+  showMergeTagModal.value = false
+  alert(`已将 ${updatedCount} 个联系人的标签"${sourceTag}"合并到"${targetTag}"`)
+}
+
+async function confirmDeleteTag(tagName) {
+  const count = allTags.value.find(t => t.name === tagName)?.count || 0
+  
+  if (!confirm(`确定删除标签"${tagName}"吗？\n这将移除 ${count} 个联系人的该标签。`)) {
+    return
+  }
+  
+  let updatedCount = 0
+  for (const contact of contactStore.contacts) {
+    if (contact.tags && contact.tags.includes(tagName)) {
+      const newTags = contact.tags.filter(t => t !== tagName)
+      await contactStore.updateContact({ ...contact, tags: newTags })
+      updatedCount++
+    }
+  }
+  
+  alert(`已从 ${updatedCount} 个联系人移除标签"${tagName}"`)
 }
 
 async function syncNow() {
@@ -876,5 +1073,63 @@ async function importData(event) {
 
 .import-info li {
   margin: 4px 0;
+}
+
+/* 标签管理 */
+.tag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tag-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.tag-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tag-name {
+  font-weight: 500;
+}
+
+.tag-count {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.tag-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-sm {
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.btn-danger {
+  background: #ef4444;
+  color: white;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
+.merge-info {
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  margin-bottom: 16px;
 }
 </style>
