@@ -1,39 +1,40 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import { execSync } from 'child_process'
+import { existsSync, readFileSync } from 'node:fs'
 
-// 获取 Git 标签、hash 和构建时间
-const getVersionInfo = () => {
-  try {
-    console.log('[Build] Getting version info...')
-    const tag = execSync('git describe --tags --always 2>/dev/null || echo "v1.0.0"').toString().trim()
-    console.log('[Build] Tag:', tag)
-    const hash = execSync('git rev-parse --short HEAD 2>/dev/null || echo "unknown"').toString().trim()
-    console.log('[Build] Hash:', hash)
-    return { tag, hash }
-  } catch (e) {
-    console.log('[Build] Error getting version:', e.message)
-    return { tag: 'v1.0.0', hash: 'unknown' }
+/**
+ * 版本信息来自 scripts/generate-version.js 生成的 src/version.json。
+ * src/version.json 是构建产物（已 gitignore），所以直接跑 `vite` / `vite build`
+ * 会拿不到它 —— 这里提前给出明确提示，而不是等编译到 src/version.js 时莫名报错。
+ */
+const versionFile = new URL('./src/version.json', import.meta.url)
+if (!existsSync(versionFile)) {
+  throw new Error(
+    '缺少 src/version.json：请用 `npm run dev` / `npm run build`（会先执行 scripts/generate-version.js），或单独执行 `npm run gen:version`'
+  )
+}
+
+/**
+ * 把构建时生成的 src/version.json 一并产出到 dist 根目录，
+ * 供页面启动后做"新版本可用"比对（见 src/components/UpdateNotice.vue）。
+ */
+function versionManifestPlugin() {
+  return {
+    name: 'pim-version-manifest',
+    generateBundle() {
+      try {
+        const raw = readFileSync(new URL('./src/version.json', import.meta.url), 'utf8')
+        this.emitFile({ type: 'asset', fileName: 'version.json', source: raw })
+      } catch (e) {
+        this.warn(`version.json 读取失败，跳过产出：${e.message}`)
+      }
+    }
   }
 }
 
-const versionInfo = getVersionInfo()
-const buildTime = new Date().toLocaleString('zh-CN', {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit'
-})
-
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), versionManifestPlugin()],
   base: './',
-  define: {
-    __APP_VERSION__: JSON.stringify(versionInfo.tag),
-    __GIT_HASH__: JSON.stringify(versionInfo.hash),
-    __BUILD_TIME__: JSON.stringify(buildTime)
-  },
   build: {
     outDir: 'dist',
     assetsDir: 'assets',

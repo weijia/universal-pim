@@ -442,12 +442,13 @@ import { giteeSyncService } from '../services/giteeSyncService'
 import { db } from '../services/db'
 import { useContactStore } from '../stores/contactStore'
 import { useMessageStore } from '../stores/messageStore'
+import { VERSION, COMMIT_SHA, BUILD_TIME } from '../version'
 
-// 版本信息 - 构建时会自动替换
+// 版本信息 - 构建时由 scripts/generate-version.js 生成 src/version.json
 const versionInfo = {
-  tag: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'v1.0.0',
-  hash: typeof __GIT_HASH__ !== 'undefined' ? __GIT_HASH__ : 'unknown',
-  buildTime: typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : new Date().toLocaleString('zh-CN')
+  tag: VERSION,
+  hash: COMMIT_SHA,
+  buildTime: BUILD_TIME
 }
 
 const contactStore = useContactStore()

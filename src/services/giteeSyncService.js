@@ -3,6 +3,8 @@
  * 用于导出/导入联系人和消息到 Gitee 仓库
  */
 
+import { VERSION, COMMIT_SHA } from '../version'
+
 const GITEE_API_BASE = 'https://gitee.com/api/v5'
 
 /**
@@ -372,8 +374,8 @@ async function exportMetadata(db, config, stats) {
   const filePath = `${config.path}metadata.json`
   
   const metadata = {
-    version: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'v1.0.0',
-    hash: typeof __GIT_HASH__ !== 'undefined' ? __GIT_HASH__ : 'unknown',
+    version: VERSION,
+    hash: COMMIT_SHA,
     lastExportTime: new Date().toISOString(),
     stats: stats,
     exportedAt: new Date().toISOString()

@@ -1,6 +1,7 @@
 <template>
   <div id="app">
     <router-view />
+    <UpdateNotice />
   </div>
 </template>
 
@@ -9,6 +10,7 @@ import { onMounted } from 'vue'
 import { useContactStore } from './stores/contactStore'
 import { useMessageStore } from './stores/messageStore'
 import { syncService } from './services/syncService'
+import UpdateNotice from './components/UpdateNotice.vue'
 
 const contactStore = useContactStore()
 const messageStore = useMessageStore()
