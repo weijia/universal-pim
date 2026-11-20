@@ -19,7 +19,7 @@
     "vue-router": "^4.3.0",
     "zen-fs-cache": "^1.0.6",
     "zen-fs-config": "^0.7.25",
-    "zen-fs-config-ui": "^0.3.35",
+    "zen-fs-config-ui": "^0.3.36",
     "zen-fs-gitee": "^1.2.42",
     "zen-fs-sync": "^0.4.18",
     "zen-fs-webdav": "^0.1.1"
